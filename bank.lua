@@ -232,7 +232,7 @@ function main()
                         end
                     else
                         message = err or "Error reading balance"
-                    }
+                    end
                     state = "main"
                 elseif isClickInButton(param2, param3, 14, 9, 10, 3) then
                     state = "main"
@@ -249,7 +249,7 @@ function main()
                         end
                     else
                         message = err or "Error reading balance"
-                    }
+                    end
                     state = "main"
                 elseif param1 == "2" then
                     state = "main"
