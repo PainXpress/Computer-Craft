@@ -93,13 +93,18 @@ local function scrollWord(word, color)
     end
 end
 
--- Main loop: scroll GEARHALLOW then CASINO
+-- Main loop: alternate GEARHALLOW and CASINO with changing colors
 local colorsList = { colors.red, colors.orange, colors.yellow, colors.green, colors.cyan, colors.blue, colors.purple, colors.pink }
+local wordList = {"GEARHALLOW", "CASINO"}
+local wordIndex = 1
+local colorIndex = 1
+
 while true do
-    for _, color in ipairs(colorsList) do
-        scrollWord("GEARHALLOW", color)
-    end
-    for _, color in ipairs(colorsList) do
-        scrollWord("CASINO", color)
-    end
+    local word = wordList[wordIndex]
+    local color = colorsList[colorIndex]
+    scrollWord(word, color)
+
+    -- Update indexes
+    wordIndex = wordIndex % #wordList + 1
+    colorIndex = colorIndex % #colorsList + 1
 end
