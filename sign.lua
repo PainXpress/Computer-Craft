@@ -148,28 +148,23 @@ function displayTextScroll(fullText, color)
     local totalWidth = (#fullText * letterWidth) + ((#fullText - 1) * spacing)
     local visibleWidth = monW
 
-    for offset = 0, totalWidth do
+    local scrollStart = visibleWidth
+    local scrollEnd = -totalWidth
+
+    for offset = scrollStart, scrollEnd, -1 do
         mon.clear()
         drawBorder()
-        local xStart = 2 - offset
+        local xStart = offset
         local yStart = math.floor((monH - 5 * scale) / 2)
         for i = 1, #fullText do
             local char = fullText:sub(i, i):upper()
             drawLetter(char, xStart + (i - 1) * (letterWidth + spacing), yStart, scale, color)
         end
+
+        -- Pause when message is centered
+        local centeredAt = math.floor((visibleWidth - totalWidth) / 2)
+        if offset == centeredAt then sleep(1.5) end
+
         sleep(0.05)
-    end
-end
-
-local messages = {"GEARHALLOW", "CASINO"}
-local colorsList = { colors.red, colors.orange, colors.yellow, colors.green, colors.cyan, colors.blue, colors.purple, colors.pink }
-
-while true do
-    for _, message in ipairs(messages) do
-        for _, color in ipairs(colorsList) do
-            displayTextScroll(message, color)
-            sleep(0.4)
-        end
-        sleep(1.5)
     end
 end
