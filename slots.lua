@@ -1,7 +1,7 @@
 -- Function to find the disk drive and mount path
 function getDiskMount()
     for _, side in ipairs(peripheral.getNames()) do
-        if peripheral.getType(side) == "drive" and disk.isDiskPresent(side) then
+        if peripheral.getType(side) == "drive" and disk.isPresent(side) then
             return disk.getMountPath(side), side
         end
     end
