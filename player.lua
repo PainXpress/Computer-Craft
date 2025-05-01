@@ -33,7 +33,7 @@ local showdown = false
 -- Read balance from disk
 function readBalance(diskID)
     if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
-        return nil necesitamos un disco válido insertado
+        return nil, "Invalid or no disk inserted"
     end
     local path = drive.getMountPath()
     if fs.exists(fs.combine(path, "balance.txt")) then
