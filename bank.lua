@@ -35,9 +35,11 @@ function writeBalance(balance)
     return true
 end
 
--- Write to monitor
-function writeMonitor(x, y, text)
+-- Write to monitor with color
+function writeMonitor(x, y, text, fgColor, bgColor)
     if monitor then
+        monitor.setTextColor(fgColor or colors.white)
+        monitor.setBackgroundColor(bgColor or colors.black)
         monitor.setCursorPos(x, y)
         monitor.write(text)
     end
@@ -49,31 +51,59 @@ function clearMonitor()
         monitor.clear()
         monitor.setTextScale(0.5)
         monitor.setBackgroundColor(colors.black)
-        monitor.setTextColor(colors.white)
+        monitor.setTextColor(colors.yellow)
     end
+end
+
+-- Draw border
+function drawBorder(x, y, width, height, fgColor, bgColor)
+    if not monitor then return end
+    local horizontal = string.rep("-", width - 2)
+    writeMonitor(x, y, "+" .. horizontal .. "+", fgColor, bgColor)
+    for i = 1, height - 2 do
+        writeMonitor(x, y + i, "|", fgColor, bgColor)
+        writeMonitor(x + width - 1, y + i, "|", fgColor, bgColor)
+    end
+    writeMonitor(x, y + height - 1, "+" .. horizontal .. "+", fgColor, bgColor)
+end
+
+-- Center text
+function centerText(text, width)
+    local padding = math.floor((width - #text) / 2)
+    return string.rep(" ", padding) .. text .. string.rep(" ", width - #text - padding)
 end
 
 -- Display welcome screen on monitor
 function displayWelcome()
     clearMonitor()
-    writeMonitor(1, 1, "Welcome to the GearHallow Casino")
-    writeMonitor(1, 3, "Conversion Rate: 1,000 currency = 100 chips")
-    writeMonitor(1, 5, "Please insert your floppy disk")
-    writeMonitor(1, 6, "into the disk drive.")
+    local width = 28
+    drawBorder(1, 1, width, 10, colors.yellow, colors.black)
+    writeMonitor(2, 2, centerText("GearHallow Casino", width - 2), colors.yellow, colors.black)
+    writeMonitor(2, 4, centerText("Conversion: 1,000 = 100 chips", width - 2), colors.lime, colors.black)
+    writeMonitor(2, 6, "Insert floppy disk to view", colors.white, colors.black)
+    writeMonitor(2, 7, "balance and transact.", colors.white, colors.black)
+    local balance, err = readBalance()
+    if balance then
+        writeMonitor(2, 9, centerText("Balance: " .. balance .. " chips", width - 2), colors.green, colors.black)
+    else
+        writeMonitor(2, 9, centerText("No disk inserted", width - 2), colors.red, colors.black)
+    end
 end
 
 -- Display transaction result on monitor
 function displayResult(chips, isBuy)
     clearMonitor()
+    local width = 28
+    drawBorder(1, 1, width, 8, colors.yellow, colors.black)
     if isBuy then
-        writeMonitor(1, 1, "Purchased " .. chips .. " chips")
+        writeMonitor(2, 2, centerText("Purchased " .. chips .. " chips", width - 2), colors.green, colors.black)
     else
         local currency = math.floor(chips / conversion_rate)
-        writeMonitor(1, 1, "Cashed out " .. chips .. " chips")
-        writeMonitor(1, 2, "for " .. currency .. " currency")
+        writeMonitor(2, 2, centerText("Cashed out " .. chips .. " chips", width - 2), colors.green, colors.black)
+        writeMonitor(2, 3, centerText("for " .. currency .. " currency", width - 2), colors.green, colors.black)
     end
-    writeMonitor(1, 4, "Please remove your floppy disk")
-    writeMonitor(1, 5, "and have fun at the casino!")
+    writeMonitor(2, 5, centerText("Please remove your floppy disk", width - 2), colors.white, colors.black)
+    writeMonitor(2, 6, centerText("and have fun at the casino!", width - 2), colors.white, colors.black)
     sleep(5) -- Show for 5 seconds
     displayWelcome()
 end
@@ -113,8 +143,9 @@ function main()
                 print("")
                 print("[1] Buy Chips")
                 print("[2] Cash Out")
-                print("[3] Exit")
-                print("Select option (1-3): ")
+                print("[3] Check Balance")
+                print("[4] Exit")
+                print("Select option (1-4): ")
 
                 local event, param1 = os.pullEvent("char")
                 message = ""
@@ -125,10 +156,12 @@ function main()
                     elseif param1 == "2" then
                         state = "cash"
                     elseif param1 == "3" then
+                        state = "check"
+                    elseif param1 == "4" then
                         clearMonitor()
                         break
                     else
-                        message = "Press 1, 2, or 3"
+                        message = "Press 1, 2, 3, or 4"
                     end
                 end
 
@@ -192,6 +225,18 @@ function main()
                         message = err or "Error reading balance"
                         state = "main"
                     end
+                elseif state == "check" then
+                    clearTerminal()
+                    print("GearHallow Casino Bank")
+                    local balance, err = readBalance()
+                    if balance then
+                        print("Balance: " .. balance .. " chips")
+                    else
+                        print(err or "Error reading balance")
+                    end
+                    print("Press any key to continue...")
+                    os.pullEvent("char")
+                    state = "main"
                 end
             end
         end
@@ -204,7 +249,7 @@ if not ok and err ~= "Terminated" then
     printError("Error: " .. err)
     if monitor then
         clearMonitor()
-        writeMonitor(1, 1, "Bank System Error")
-        writeMonitor(1, 2, "Please contact staff")
+        writeMonitor(1, 1, "Bank System Error", colors.red, colors.black)
+        writeMonitor(1, 2, "Please contact staff", colors.white, colors.black)
     end
 end
