@@ -16,6 +16,9 @@ local payouts = {
 local state = "main"
 local bet = 0
 local message = ""
+local reels = nil
+local win = 0
+local spinProcessed = false
 
 -- Read balance from disk
 function readBalance()
@@ -140,9 +143,12 @@ function main()
                 writeOutput(1, 7, "[2] Bet 50")
             end
         elseif state == "spin" then
-            local reels = spinReels()
+            if not spinProcessed then
+                reels = spinReels()
+                win = calculateWin(reels, bet)
+                spinProcessed = true
+            end
             writeOutput(2, 6, "Reels: " .. table.concat(reels, " | "))
-            local win = calculateWin(reels, bet)
             if win > 0 then
                 writeOutput(2, 7, "Win: " .. win .. " chips!")
                 playSound("entity.player.levelup")
@@ -175,6 +181,8 @@ function main()
                     bet = 10
                 elseif isClickInButton(param2, param3, 14, 6, 10, 3) then
                     bet = 50
+                else
+                    message = "Click Bet 10 or Bet 50"
                 end
             else
                 if param1 == "1" then
@@ -191,6 +199,7 @@ function main()
                     balance = balance - bet
                     if writeBalance(balance) then
                         state = "spin"
+                        spinProcessed = false
                     else
                         message = "Error writing to disk"
                     end
@@ -204,6 +213,8 @@ function main()
                 if isClickInButton(param2, param3, 2, 9, 22, 3) then
                     state = "main"
                     bet = 0
+                else
+                    message = "Click Continue to play again"
                 end
             else
                 if param1 == "1" then
