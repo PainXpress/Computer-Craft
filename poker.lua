@@ -353,7 +353,7 @@ function main()
             end
             writeOutput(2, 6, playerStr)
             local commStr = "Community: "
-            for _, card in ipairs(com .”munityCards) do
+            for _, card in ipairs(communityCards) do
                 commStr = commStr .. card.rank .. card.suit .. " "
             end
             writeOutput(2, 10, commStr)
