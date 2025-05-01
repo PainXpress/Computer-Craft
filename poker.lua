@@ -1,10 +1,6 @@
 -- Poker (Texas Hold'em) for Casino Debit Cards
 -- Save as 'poker.lua' on main computer
 
-local drive = peripheral.wrap("left")
-if not drive then
-    error("No disk drive found. Please connect a disk drive.")
-end
 local monitor = peripheral.find("monitor")
 local modem = peripheral.find("modem")
 if not modem then
@@ -30,56 +26,43 @@ local ranks = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
 local showdown = false
 local showdownResponses = {} -- {playerID, choice: "muck" or "show"}
 
--- Read balance from disk
-function readBalance(diskID)
-    if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
-        print("readBalance failed: Invalid or no disk for diskID " .. (diskID or "nil"))
-        return nil, "Invalid or no disk inserted"
+-- Request balance from player
+function readBalance(playerID, diskID)
+    print("Requesting balance for player ID " .. playerID .. ", diskID " .. diskID)
+    rednet.send(playerID, {type = "read_balance", diskID = diskID})
+    local senderID, msg = rednet.receive(5) -- Timeout after 5 seconds
+    if senderID == playerID and msg and msg.type == "balance_response" then
+        print("Received balance: " .. (msg.balance or "nil") .. " for diskID " .. diskID)
+        return msg.balance, msg.error
     end
-    local path = drive.getMountPath()
-    if fs.exists(fs.combine(path, "balance.txt")) then
-        local file = fs.open(fs.combine(path, "balance.txt"), "r")
-        local balance = tonumber(file.readLine())
-        file.close()
-        print("readBalance: DiskID " .. diskID .. " has balance " .. balance)
-        return balance
-    else
-        print("readBalance: No balance.txt for diskID " .. diskID)
-        return 0
-    end
+    print("readBalance failed: No response from player ID " .. playerID)
+    return nil, "No response from player"
 end
 
--- Write balance to disk
-function writeBalance(diskID, balance)
-    if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
-        print("writeBalance failed: Invalid or no disk for diskID " .. (diskID or "nil"))
-        return false, "Invalid or no disk inserted"
+-- Request balance write to player
+function writeBalance(playerID, diskID, balance)
+    print("Requesting write balance " .. balance .. " for player ID " .. playerID .. ", diskID " .. diskID)
+    rednet.send(playerID, {type = "write_balance", diskID = diskID, balance = balance})
+    local senderID, msg = rednet.receive(5)
+    if senderID == playerID and msg and msg.type == "write_response" and msg.success then
+        print("writeBalance: Wrote " .. balance .. " to diskID " .. diskID)
+        return true
     end
-    local path = drive.getMountPath()
-    local file = fs.open(fs.combine(path, "balance.txt"), "w")
-    file.write(tostring(balance))
-    file.close()
-    print("writeBalance: Wrote " .. balance .. " to diskID " .. diskID)
-    return true
+    print("writeBalance failed: No response or error for player ID " .. playerID)
+    return false, "Error writing to disk"
 end
 
--- Read username from disk
-function readUsername(diskID)
-    if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
-        print("readUsername: No disk for diskID " .. (diskID or "nil"))
-        return "Unknown"
+-- Read username from player
+function readUsername(playerID, diskID)
+    print("Requesting username for player ID " .. playerID .. ", diskID " .. diskID)
+    rednet.send(playerID, {type = "read_username", diskID = diskID})
+    local senderID, msg = rednet.receive(5)
+    if senderID == playerID and msg and msg.type == "username_response" then
+        print("Received username: " .. (msg.name or "Unknown") .. " for diskID " .. diskID)
+        return msg.name or "Unknown"
     end
-    local path = drive.getMountPath()
-    if fs.exists(fs.combine(path, "username.txt")) then
-        local file = fs.open(fs.combine(path, "username.txt"), "r")
-        local name = file.readLine()
-        file.close()
-        print("readUsername: DiskID " .. diskID .. " has name " .. (name or "Unknown"))
-        return name or "Unknown"
-    else
-        print("readUsername: No username.txt for diskID " .. diskID)
-        return "Unknown"
-    end
+    print("readUsername: No response from player ID " .. playerID)
+    return "Unknown"
 end
 
 -- Write output to monitor
@@ -382,18 +365,18 @@ function main()
         local event, param1, param2, param3 = eventData[1], eventData[2], eventData[3], eventData[4]
         message = ""
 
-        if event REN "rednet_message" then
+        if event == "rednet_message" then
             local senderID, msg = param1, param2
             print("Received message: " .. msg.type .. " from " .. senderID)
             if msg.type == "join" and state == "lobby" then
                 print("Processing join for player ID " .. senderID .. ", diskID " .. (msg.diskID or "nil"))
-                local balance, err = readBalance(msg.diskID)
+                local balance, err = readBalance(senderID, msg.diskID)
                 if balance and balance >= buyIn then
                     balance = balance - buyIn
-                    if writeBalance(msg.diskID, balance) then
+                    if writeBalance(senderID, msg.diskID, balance) then
                         table.insert(players, {
                             id = senderID,
-                            name = readUsername(msg.diskID),
+                            name = readUsername(senderID, msg.diskID),
                             chips = startingChips,
                             diskID = msg.diskID,
                             hand = {},
@@ -401,9 +384,9 @@ function main()
                             betThisRound = 0,
                             showCards = false
                         })
-                        rednet.send(senderID, {type = "joined", name = readUsername(msg.diskID)})
-                        message = "Player " .. readUsername(msg.diskID) .. " joined!"
-                        print("Join successful for " .. readUsername(msg.diskID) .. ", sent joined message")
+                        rednet.send(senderID, {type = "joined", name = readUsername(senderID, msg.diskID)})
+                        message = "Player " .. readUsername(senderID, msg.diskID) .. " joined!"
+                        print("Join successful for " .. readUsername(senderID, msg.diskID) .. ", sent joined message")
                         playSound("block.note_block.hat")
                     else
                         rednet.send(senderID, {type = "error", message = "Error writing to disk"})
@@ -509,7 +492,7 @@ function main()
                             state = "lobby"
                             for _, p in ipairs(players) do
                                 if p.chips > 0 then
-                                    writeBalance(p.diskID, (readBalance(p.diskID) or 0) + p.chips)
+                                    writeBalance(p.id, p.diskID, (readBalance(p.id, p.diskID) or 0) + p.chips)
                                 end
                             end
                             players = {}
@@ -616,7 +599,7 @@ function main()
                         if p.active then
                             table.insert(handResults, {player = p, hand = evaluateHand(p)})
                         end
-                    end
+                    }
                     table.sort(handResults, function(a, b) return compareHands(a.hand, b.hand) > 0 end)
                     for _, pot in ipairs(pots) do
                         local eligiblePlayers = {}
@@ -627,7 +610,7 @@ function main()
                                     break
                                 end
                             end
-                        end
+                        }
                         if #eligiblePlayers > 0 then
                             local bestHand = eligiblePlayers[1].hand
                             local winners = {}
@@ -635,7 +618,7 @@ function main()
                                 if compareHands(p.hand, bestHand) == 0 then
                                     table.insert(winners, p.player)
                                 end
-                            end
+                            }
                             local rake = math.floor(pot.amount * 0.01)
                             pot.amount = pot.amount - rake
                             local split = math.floor(pot.amount / #winners)
@@ -674,7 +657,7 @@ function main()
                         state = "lobby"
                         for _, p in ipairs(players) do
                             if p.chips > 0 then
-                                writeBalance(p.diskID, (readBalance(p.diskID) or 0) + p.chips)
+                                writeBalance(p.id, p.diskID, (readBalance(p.id, p.diskID) or 0) + p.chips)
                             end
                         end
                         players = {}
