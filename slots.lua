@@ -1,17 +1,20 @@
--- Slot Machine for Casino
+-- Slot Machine for Casino Debit Cards
 -- Save as 'slots.lua' on slot machine computer
 
 local drive = peripheral.wrap("right")
 local monitor = peripheral.find("monitor")
 local symbols = {"7", "Cherry", "Bar", "Bell"}
-local payouts = { -- {symbol, count, multiplier}
-    {"7", 3, 50}, {"Cherry", 3, 20}, {"Bar", 3, 10}, {"Bell", 3, 5}
+local payouts = {
+    {symbol = "7", count = 3, multiplier = 50},
+    {symbol = "Cherry", count = 3, multiplier = 20},
+    {symbol = "Bar", count = 3, multiplier = 10},
+    {symbol = "Bell", count = 3, multiplier = 5}
 }
 local state = "main"
 local bet = 0
-local input = ""
 local message = ""
 
+-- Read balance from disk
 function readBalance()
     if not drive.isDiskPresent() then
         return nil, "No disk inserted"
@@ -27,6 +30,7 @@ function readBalance()
     end
 end
 
+-- Write balance to disk
 function writeBalance(balance)
     if not drive.isDiskPresent() then
         return false, "No disk inserted"
@@ -38,6 +42,7 @@ function writeBalance(balance)
     return true
 end
 
+-- Write to monitor or terminal
 function writeOutput(x, y, text)
     if monitor then
         monitor.setCursorPos(x, y)
@@ -48,6 +53,7 @@ function writeOutput(x, y, text)
     end
 end
 
+-- Clear monitor or terminal
 function clearOutput()
     if monitor then
         monitor.clear()
@@ -61,6 +67,7 @@ function clearOutput()
     end
 end
 
+-- Draw button (monitor only)
 function drawButton(x, y, width, height, text, color)
     if not monitor then return end
     monitor.setBackgroundColor(color)
@@ -73,10 +80,12 @@ function drawButton(x, y, width, height, text, color)
     monitor.write(text)
 end
 
+-- Check if click is within button (monitor only)
 function isClickInButton(x, y, bx, by, bw, bh)
     return x >= bx and x < bx + bw and y >= by and y < by + bh
 end
 
+-- Spin reels
 function spinReels()
     local reels = {}
     for i = 1, 3 do
@@ -85,16 +94,17 @@ function spinReels()
     return reels
 end
 
+-- Calculate win based on reels and bet
 function calculateWin(reels, bet)
     for _, payout in ipairs(payouts) do
-        local symbol, count, multiplier = payout[1], payout[2], payout[3]
-        if reels[1] == symbol and reels[2] == symbol and reels[3] == symbol then
-            return bet * multiplier
+        if reels[1] == payout.symbol and reels[2] == payout.symbol and reels[3] == payout.symbol then
+            return bet * payout.multiplier
         end
     end
     return 0
 end
 
+-- Main loop
 function main()
     math.randomseed(os.time())
     while true do
@@ -102,7 +112,7 @@ function main()
         writeOutput(1, 1, "Slot Machine")
         local balance, err = readBalance()
         if balance then
-            writeOutput(1, 2, "Chips: " .. balance)
+            writeOutput(1, 2, "Chip Balance: " .. balance)
         else
             writeOutput(1, 2, err or "Error reading balance")
         end
