@@ -6,32 +6,66 @@ if not drive then
     error("No disk drive found. Please connect a disk drive.")
 end
 local monitor = peripheral.find("monitor")
-if not monitor then
-    error("No monitor found. Please connect a 2x2 monitor.")
-end
 local modem = peripheral.find("modem")
 if not modem then
-    error("No wireless modem found. Please attach a modem.")
+    error("No wireless modem found. Please connect a modem.")
 end
 print("Opening modem: " .. peripheral.getName(modem))
 rednet.open(peripheral.getName(modem))
-local serverID = nil
-local playerName = "Unknown"
-local balance = 0
+local serverID
+local state = "searching"
 local hand = {}
-local communityCards = {}
-local pots = {{amount = 0, eligible = {}}}
+local chips = 0
 local currentBet = 0
-local blinds = {small = 10, big = 20}
-local round = "preflop"
-local message = ""
-local state = "lobby"
-local myID = os.getComputerID()
-local currentPlayer = nil
+local name = "Unknown"
+local diskID
+local balance = 0
+local buyIn = 100
+local communityCards = {}
+local pots = {}
+local currentPlayer
+local blinds = {}
+local round = ""
 local showdown = false
 
+-- Write output to monitor
+function writeOutput(x, y, text)
+    if monitor then
+        monitor.setCursorPos(x, y)
+        monitor.write(text)
+    end
+end
+
+-- Clear output with color
+function clearOutput(color)
+    if monitor then
+        monitor.clear()
+        monitor.setTextScale(0.5)
+        monitor.setBackgroundColor(color)
+        monitor.setTextColor(colors.white)
+    end
+end
+
+-- Draw button
+function drawButton(x, y, width, height, text, color)
+    if not monitor then return end
+    monitor.setBackgroundColor(color)
+    for i = 0, height - 1 do
+        monitor.setCursorPos(x, y + i)
+        monitor.write(string.rep(" ", width))
+    end
+    monitor.setCursorPos(x + math.floor((width - #text) / 2), y + math.floor(height / 2))
+    monitor.setTextColor(colors.white)
+    monitor.write(text)
+end
+
+-- Check if click is in button
+function isClickInButton(x, y, bx, by, bw, bh)
+    return x >= bx and x < bx + bw and y >= by and y < by + bh
+end
+
 -- Read balance from disk
-function readBalance(diskID)
+function readBalance()
     if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
         return nil, "Invalid or no disk inserted"
     end
@@ -46,8 +80,20 @@ function readBalance(diskID)
     end
 end
 
+-- Write balance to disk
+function writeBalance(newBalance)
+    if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
+        return false, "Invalid or no disk inserted"
+    end
+    local path = drive.getMountPath()
+    local file = fs.open(fs.combine(path, "balance.txt"), "w")
+    file.write(tostring(newBalance))
+    file.close()
+    return true
+end
+
 -- Read username from disk
-function readUsername(diskID)
+function readUsername()
     if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
         return "Unknown"
     end
@@ -62,128 +108,80 @@ function readUsername(diskID)
     end
 end
 
--- Write output to monitor
-function writeOutput(x, y, text)
-    monitor.setCursorPos(x, y)
-    monitor.write(text)
-end
-
--- Clear output with color
-function clearOutput(color)
-    monitor.clear()
-    monitor.setTextScale(0.5)
-    monitor.setBackgroundColor(color)
-    monitor.setTextColor(colors.white)
-end
-
--- Draw button
-function drawButton(x, y, width, height, text, color)
-    monitor.setBackgroundColor(color)
-    for i = 0, height - 1 do
-        monitor.setCursorPos(x, y + i)
-        monitor.write(string.rep(" ", width))
-    end
-    monitor.setCursorPos(x + math.floor((width - #text) / 2), y + math.floor(height / 2))
-    monitor.setTextColor(colors.white)
-    monitor.write(text)
-end
-
--- Check click in button
-function isClickInButton(x, y, bx, by, bw, bh)
-    return x >= bx and x < bx + bw and y >= by and y < by + bh
-end
-
 -- Main loop
 function main()
-    rednet.host("poker", "player" .. myID)
-    local diskID = drive.isDiskPresent() and drive.getDiskID() or nil
-    if diskID then
-        playerName = readUsername(diskID)
-        balance = readBalance(diskID) or 0
-    else
-        print("No disk inserted")
-    end
-    term.clear()
-    term.setCursorPos(1, 1)
-    term.setBackgroundColor(colors.black)
-    term.setTextColor(colors.white)
     while true do
-        clearOutput(state == "lobby" and colors.yellow or colors.black)
-        writeOutput(1, 1, "Texas Hold'em - " .. playerName)
-        writeOutput(1, 2, "Balance: " .. balance .. " chips")
-        writeOutput(1, 4, message)
+        clearOutput(colors.black)
+        writeOutput(1, 1, "Texas Hold'em")
 
-        if state == "lobby" then
-            writeOutput(1, 6, "Searching for server...")
-            if not serverID then
-                print("Looking up server...")
-                serverID = rednet.lookup("poker", "server")
-                print("Server ID: " .. (serverID or "nil"))
-                if serverID and diskID then
-                    print("Sending join to server " .. serverID)
-                    rednet.send(serverID, {type = "join", diskID = diskID})
-                elseif not diskID then
-                    message = "Please insert a disk"
+        if state == "searching" then
+            writeOutput(1, 3, "Searching for server...")
+            if not drive.isDiskPresent() then
+                writeOutput(1, 5, "Please insert a disk")
+            else
+                diskID = drive.getDiskID()
+                balance = readBalance()
+                if not balance or balance < buyIn then
+                    writeOutput(1, 5, "Insufficient chips: " .. (balance or 0) .. "/" .. buyIn)
+                else
+                    print("Looking up server...")
+                    serverID = rednet.lookup("poker", "server")
+                    if serverID then
+                        print("Server ID: " .. serverID)
+                        print("Sending join to server " .. serverID)
+                        rednet.send(serverID, {type = "join", diskID = diskID})
+                    end
                 end
             end
         elseif state == "game" then
-            -- Display hole cards on terminal
-            term.clear()
-            term.setCursorPos(1, 1)
-            local handStr = "Your Hand: "
-            for _, card in ipairs(hand) do
-                handStr = handStr .. card.rank .. card.suit .. " "
-            end
-            term.write(handStr)
-            -- Display public info on monitor
+            writeOutput(1, 3, "Player: " .. name .. " | Chips: " .. chips)
+            writeOutput(1, 4, "Balance: " .. balance .. " chips")
             local commStr = "Community: "
             for _, card in ipairs(communityCards) do
                 commStr = commStr .. card.rank .. card.suit .. " "
             end
-            writeOutput(2, 6, commStr)
+            writeOutput(1, 6, commStr)
             local potStr = "Pots: "
             for i, pot in ipairs(pots) do
                 potStr = potStr .. (i > 1 and "Side " or "Main ") .. pot.amount .. " "
             end
-            writeOutput(2, 7, potStr)
-            writeOutput(2, 8, "Bet: " .. currentBet)
-            writeOutput(2, 9, "Blinds: " .. blinds.small .. "/" .. blinds.big)
-            writeOutput(2, 10, "Round: " .. round)
-
-            if currentPlayer == myID then
-                if showdown then
-                    drawButton(2, 12, 10, 3, "Muck", colors.red)
-                    drawButton(14, 12, 10, 3, "Show", colors.white)
-                else
-                    drawButton(2, 12, 6, 3, "Check", colors.green)
-                    drawButton(9, 12, 6, 3, "Call", colors.blue)
-                    drawButton(16, 12, 6, 3, "Raise", colors.yellow)
-                    drawButton(2, 16, 6, 3, "Fold", colors.red)
-                    drawButton(16, 16, 6, 3, "All-in", colors.orange)
-                end
-            else
-                writeOutput(2, 12, "Waiting for other players...")
+            writeOutput(1, 7, potStr)
+            writeOutput(1, 8, "Current Bet: " .. currentBet)
+            if showdown then
+                drawButton(2, 10, 10, 3, "Muck", colors.red)
+                drawButton(14, 10, 10, 3, "Show", colors.green)
+            elseif currentPlayer == os.getComputerID() then
+                drawButton(2, 10, 10, 3, "Check", currentBet == 0 and colors.green or colors.gray)
+                drawButton(14, 10, 10, 3, "Call", currentBet > 0 and colors.green or colors.gray)
+                drawButton(2, 14, 10, 3, "Raise", colors.green)
+                drawButton(14, 14, 10, 3, "Fold", colors.red)
+                drawButton(2, 18, 10, 3, "All-in", colors.orange)
             end
+        elseif state == "eliminated" then
+            writeOutput(1, 3, "Eliminated! Insert disk to rejoin.")
         end
 
         local eventData = {os.pullEvent()}
         local event, param1, param2, param3 = eventData[1], eventData[2], eventData[3], eventData[4]
-        message = ""
 
         if event == "rednet_message" then
             local senderID, msg = param1, param2
-            print("Received message: " .. msg.type .. " from " .. senderID)
-            if msg.type == "joined" then
+            print("Received message: " .. (msg.type or "nil") .. " from " .. senderID)
+            if msg.type == "joined" and state == "searching" then
                 state = "game"
-                playerName = msg.name
-                message = "Joined game!"
-            elseif msg.type == "error" then
-                message = msg.message
-                serverID = nil
-                state = "lobby"
-            elseif msg.type == "hand" then
+                name = msg.name
+                chips = 1000
+                balance = balance - buyIn
+                writeBalance(balance)
+                print("Joined game as " .. name)
+            elseif msg.type == "error" and state == "searching" then
+                writeOutput(1, 5, "Error: " .. msg.message)
+            elseif msg.type == "hand" and state == "game" then
                 hand = msg.cards
-            elseif msg.type == "state" then
+                term.clear()
+                term.setCursorPos(1, 1)
+                print("Your Hand: " .. hand[1].rank .. hand[1].suit .. " " .. hand[2].rank .. hand[2].suit)
+            elseif msg.type == "state" and state == "game" then
                 communityCards = msg.communityCards
                 pots = msg.pots
                 currentBet = msg.currentBet
@@ -191,51 +189,57 @@ function main()
                 blinds = msg.blinds
                 round = msg.round
                 showdown = msg.showdown
-            elseif msg.type == "showdown" then
+            elseif msg.type == "showdown" and state == "game" then
                 showdown = true
-            elseif msg.type == "eliminated" then
-                state = "lobby"
-                serverID = nil
-                message = "You were eliminated!"
-            end
-        elseif event == "monitor_touch" and currentPlayer == myID then
-            local x, y = param2, param3
-            if state == "game" then
-                if showdown then
-                    if isClickInButton(x, y, 2, 12, 10, 3) then
-                        rednet.send(serverID, {type = "showdown_choice", choice = "muck"})
-                        message = "Cards mucked"
-                    elseif isClickInButton(x, y, 14, 12, 10, 3) then
-                        rednet.send(serverID, {type = "showdown_choice", choice = "show"})
-                        message = "Cards shown"
-                    end
+            elseif msg.type == "eliminated" and state == "game" then
+                state = "eliminated"
+                chips = 0
+            elseif msg.type == "read_balance" then
+                print("Received read_balance request for diskID " .. (msg.diskID or "nil"))
+                if msg.diskID == diskID then
+                    local bal, err = readBalance()
+                    print("Sending balance_response: balance=" .. (bal or "nil") .. ", error=" .. (err or "nil"))
+                    rednet.send(senderID, {type = "balance_response", balance = bal, error = err})
                 else
-                    if isClickInButton(x, y, 2, 12, 6, 3) and currentBet == 0 then
-                        rednet.send(serverID, {type = "action", action = "check"})
-                        message = "Checked"
-                    elseif isClickInButton(x, y, 9, 12, 6, 3) then
-                        rednet.send(serverID, {type = "action", action = "call"})
-                        message = "Called"
-                    elseif isClickInButton(x, y, 16, 12, 6, 3) then
-                        writeOutput(2, 15, "Enter raise amount: ")
-                        term.setBackgroundColor(colors.black)
-                        term.setCursorPos(1, 3)
-                        term.write("Raise amount: ")
-                        local input = read()
-                        local amount = tonumber(input)
-                        if amount and amount > currentBet then
-                            rednet.send(serverID, {type = "action", action = "raise", amount = amount})
-                            message = "Raised to " .. amount
-                        else
-                            message = "Invalid raise amount"
-                        end
-                    elseif isClickInButton(x, y, 2, 16, 6, 3) then
-                        rednet.send(serverID, {type = "action", action = "fold"})
-                        message = "Folded"
-                    elseif isClickInButton(x, y, 16, 16, 6, 3) then
-                        rednet.send(serverID, {type = "action", action = "allin"})
-                        message = "All-in!"
+                    print("DiskID mismatch: expected " .. diskID .. ", got " .. (msg.diskID or "nil"))
+                end
+            elseif msg.type == "write_balance" and msg.diskID == diskID then
+                local success, err = writeBalance(msg.balance)
+                rednet.send(senderID, {type = "write_response", success = success, error = err})
+            elseif msg.type == "read_username" and msg.diskID == diskID then
+                local username = readUsername()
+                rednet.send(senderID, {type = "username_response", name = username})
+            elseif msg.type == "pong" then
+                print("Received pong from server")
+            end
+        elseif event == "monitor_touch" and state == "game" then
+            local x, y = param2, param3
+            if showdown then
+                if isClickInButton(x, y, 2, 10, 10, 3) then
+                    rednet.send(serverID, {type = "showdown_choice", choice = "muck"})
+                elseif isClickInButton(x, y, 14, 10, 10, 3) then
+                    rednet.send(serverID, {type = "showdown_choice", choice = "show"})
+                end
+            elseif currentPlayer == os.getComputerID() then
+                if isClickInButton(x, y, 2, 10, 10, 3) and currentBet == 0 then
+                    rednet.send(serverID, {type = "action", action = "check"})
+                elseif isClickInButton(x, y, 14, 10, 10, 3) and currentBet > 0 then
+                    rednet.send(serverID, {type = "action", action = "call"})
+                elseif isClickInButton(x, y, 2, 14, 10, 3) then
+                    term.clear()
+                    term.setCursorPos(1, 1)
+                    print("Enter raise amount: ")
+                    local amount = tonumber(read())
+                    if amount and amount > currentBet then
+                        rednet.send(serverID, {type = "action", action = "raise", amount = amount})
                     end
+                    term.clear()
+                    term.setCursorPos(1, 1)
+                    print("Your Hand: " .. hand[1].rank .. hand[1].suit .. " " .. hand[2].rank .. hand[2].suit)
+                elseif isClickInButton(x, y, 14, 14, 10, 3) then
+                    rednet.send(serverID, {type = "action", action = "fold"})
+                elseif isClickInButton(x, y, 2, 18, 10, 3) then
+                    rednet.send(serverID, {type = "action", action = "allin"})
                 end
             end
         end
