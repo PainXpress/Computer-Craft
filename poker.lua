@@ -73,14 +73,11 @@ function readUsername(diskID)
     end
 end
 
--- Write output to monitor or terminal
+-- Write output to monitor
 function writeOutput(x, y, text)
     if monitor then
         monitor.setCursorPos(x, y)
         monitor.write(text)
-    else
-        term.setCursorPos(x, y)
-        term.write(text)
     end
 end
 
@@ -91,10 +88,6 @@ function clearOutput(color)
         monitor.setTextScale(0.5)
         monitor.setBackgroundColor(color)
         monitor.setTextColor(colors.white)
-    else
-        term.clear()
-        term.setBackgroundColor(color)
-        term.setTextColor(colors.white)
     end
 end
 
@@ -109,11 +102,6 @@ function drawButton(x, y, width, height, text, color)
     monitor.setCursorPos(x + math.floor((width - #text) / 2), y + math.floor(height / 2))
     monitor.setTextColor(colors.white)
     monitor.write(text)
-end
-
--- Check click in button
-function isClickInButton(x, y, bx, by, bw, bh)
-    return x >= bx and x < bx + bw and y >= by and y < by + bh
 end
 
 -- Play sound
@@ -340,11 +328,7 @@ function main()
         if state == "lobby" then
             writeOutput(1, 6, "Waiting for players (Buy-in: " .. buyIn .. " chips)")
             if #players >= 2 then
-                if monitor then
-                    drawButton(2, 8, 10, 3, "Start", colors.green)
-                else
-                    writeOutput(1, 8, "[1] Start Game")
-                end
+                drawButton(2, 8, 10, 3, "Start", colors.green)
             end
         elseif state == "game" then
             local playerStr = ""
@@ -708,60 +692,31 @@ function main()
                     end
                 end
             end
-        elseif state == "lobby" and #players >= 2 then
-            if monitor and event == "monitor_touch" and isClickInButton(param2, param3, 2, 8, 10, 3) then
-                state = "game"
-                initDeck()
-                shuffleDeck()
-                dealCards()
-                currentPlayer = (dealerPos + 1) % #players + 1
-                -- Collect blinds
-                local sbPlayer = (dealerPos + 1) % #players + 1
-                local bbPlayer = (dealerPos + 2) % #players + 1
-                if players[sbPlayer].chips >= blinds.small then
-                    players[sbPlayer].chips = players[sbPlayer].chips - blinds.small
-                    players[sbPlayer].betThisRound = blinds.small
-                    pots[1].amount = pots[1].amount + blinds.small
-                end
-                if players[bbPlayer].chips >= blinds.big then
-                    players[bbPlayer].chips = players[bbPlayer].chips - blinds.big
-                    players[bbPlayer].betThisRound = blinds.big
-                    pots[1].amount = pots[1].amount + blinds.big
-                    currentBet = blinds.big
-                end
-                for _, p in ipairs(players) do
-                    table.insert(pots[1].eligible, p.id)
-                end
-                broadcastState()
-                playSound("block.note_block.hat")
-            elseif event == "char" and param1 == "1" then
-                state = "game"
-                initDeck()
-                shuffleDeck()
-                dealCards()
-                currentPlayer = (dealerPos + 1) % #players + 1
-                -- Collect blinds
-                local sbPlayer = (dealerPos + 1) % #players + 1
-                local bbPlayer = (dealerPos + 2) % #players + 1
-                if players[sbPlayer].chips >= blinds.small then
-                    players[sbPlayer].chips = players[sbPlayer].chips - blinds.small
-                    players[sbPlayer].betThisRound = blinds.small
-                    pots[1].amount = pots[1].amount + blinds.small
-                end
-                if players[bbPlayer].chips >= blinds.big then
-                    players[bbPlayer].chips = players[bbPlayer].chips - blinds.big
-                    players[bbPlayer].betThisRound = blinds.big
-                    pots[1].amount = pots[1].amount + blinds.big
-                    currentBet = blinds.big
-                end
-                for _, p in ipairs(players) do
-                    table.insert(pots[1].eligible, p.id)
-                end
-                broadcastState()
-                playSound("block.note_block.hat")
-            else
-                message = monitor and "Click Start" or "Press 1 to start"
+        elseif state == "lobby" and #players >= 2 and event == "monitor_touch" and isClickInButton(param2, param3, 2, 8, 10, 3) then
+            state = "game"
+            initDeck()
+            shuffleDeck()
+            dealCards()
+            currentPlayer = (dealerPos + 1) % #players + 1
+            -- Collect blinds
+            local sbPlayer = (dealerPos + 1) % #players + 1
+            local bbPlayer = (dealerPos + 2) % #players + 1
+            if players[sbPlayer].chips >= blinds.small then
+                players[sbPlayer].chips = players[sbPlayer].chips - blinds.small
+                players[sbPlayer].betThisRound = blinds.small
+                pots[1].amount = pots[1].amount + blinds.small
             end
+            if players[bbPlayer].chips >= blinds.big then
+                players[bbPlayer].chips = players[bbPlayer].chips - blinds.big
+                players[bbPlayer].betThisRound = blinds.big
+                pots[1].amount = pots[1].amount + blinds.big
+                currentBet = blinds.big
+            end
+            for _, p in ipairs(players) do
+                table.insert(pots[1].eligible, p.id)
+            end
+            broadcastState()
+            playSound("block.note_block.hat")
         end
     end
 end
