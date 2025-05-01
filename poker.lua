@@ -30,7 +30,7 @@ local showdownResponses = {} -- {playerID, choice: "muck" or "show"}
 function readBalance(playerID, diskID)
     print("Requesting balance for player ID " .. playerID .. ", diskID " .. (diskID or "nil"))
     rednet.send(playerID, {type = "read_balance", diskID = diskID})
-    local senderID, msg = rednet.receive(5) -- Timeout after 5 seconds
+    local senderID, msg = rednet.receive(10) -- Increased timeout to 10 seconds
     if senderID == playerID and msg and msg.type == "balance_response" then
         print("Received balance: " .. (msg.balance or "nil") .. " for diskID " .. (diskID or "nil"))
         return msg.balance, msg.error
@@ -43,7 +43,7 @@ end
 function writeBalance(playerID, diskID, balance)
     print("Requesting write balance " .. balance .. " for player ID " .. playerID .. ", diskID " .. (diskID or "nil"))
     rednet.send(playerID, {type = "write_balance", diskID = diskID, balance = balance})
-    local senderID, msg = rednet.receive(5)
+    local senderID, msg = rednet.receive(10) -- Increased timeout to 10 seconds
     if senderID == playerID and msg and msg.type == "write_response" and msg.success then
         print("writeBalance: Wrote " .. balance .. " to diskID " .. (diskID or "nil"))
         return true
@@ -56,7 +56,7 @@ end
 function readUsername(playerID, diskID)
     print("Requesting username for player ID " .. playerID .. ", diskID " .. (diskID or "nil"))
     rednet.send(playerID, {type = "read_username", diskID = diskID})
-    local senderID, msg = rednet.receive(5)
+    local senderID, msg = rednet.receive(10) -- Increased timeout to 10 seconds
     if senderID == playerID and msg and msg.type == "username_response" then
         print("Received username: " .. (msg.name or "Unknown") .. " for diskID " .. (diskID or "nil"))
         return msg.name or "Unknown"
@@ -711,6 +711,9 @@ function main()
                         broadcastState()
                     end
                 end
+            elseif msg and msg.type == "ping" then
+                print("Ping from " .. senderID)
+                rednet.send(senderID, {type = "pong"})
             end
         elseif state == "lobby" and #players >= 2 and event == "monitor_touch" and isClickInButton(param2, param3, 2, 8, 10, 3) then
             state = "game"
