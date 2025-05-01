@@ -13,6 +13,7 @@ local modem = peripheral.find("modem")
 if not modem then
     error("No wireless modem found. Please attach a modem.")
 end
+print("Opening modem: " .. peripheral.getName(modem))
 rednet.open(peripheral.getName(modem))
 local serverID = nil
 local playerName = "Unknown"
@@ -32,7 +33,7 @@ local showdown = false
 -- Read balance from disk
 function readBalance(diskID)
     if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
-        return nil, "Invalid or no disk inserted"
+        return nil necesitamos un disco válido insertado
     end
     local path = drive.getMountPath()
     if fs.exists(fs.combine(path, "balance.txt")) then
@@ -99,6 +100,8 @@ function main()
     if diskID then
         playerName = readUsername(diskID)
         balance = readBalance(diskID) or 0
+    else
+        print("No disk inserted")
     end
     term.clear()
     term.setCursorPos(1, 1)
@@ -113,9 +116,14 @@ function main()
         if state == "lobby" then
             writeOutput(1, 6, "Searching for server...")
             if not serverID then
+                print("Looking up server...")
                 serverID = rednet.lookup("poker", "server")
+                print("Server ID: " .. (serverID or "nil"))
                 if serverID and diskID then
+                    print("Sending join to server " .. serverID)
                     rednet.send(serverID, {type = "join", diskID = diskID})
+                elseif not diskID then
+                    message = "Please insert a disk"
                 end
             end
         elseif state == "game" then
@@ -164,6 +172,7 @@ function main()
 
         if event == "rednet_message" then
             local senderID, msg = param1, param2
+            print("Received message: " .. msg.type .. " from " .. senderID)
             if msg.type == "joined" then
                 state = "game"
                 playerName = msg.name
