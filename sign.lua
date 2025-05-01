@@ -1,4 +1,4 @@
--- GearHallow Casino Flashy Scrolling Sign with Border
+-- GearHallow Casino Flashy Scrolling Sign with Border (Faster Scroll)
 
 local mon = peripheral.find("monitor")
 assert(mon, "Monitor not found")
@@ -72,7 +72,7 @@ local function scrollWord(word, color)
     local yStart = math.floor((monH - 5 * scale) / 2) + 1
 
     -- 1) Move in: from off-screen right to center
-    for xStart = monW + 1, centerX, -1 do
+    for xStart = monW + 1, centerX, -3 do
         mon.clear()
         drawBorder()
         for i = 1, #word do
@@ -83,7 +83,7 @@ local function scrollWord(word, color)
     -- 2) Pause in center
     sleep(2)
     -- 3) Move out: from center to off-screen left
-    for xStart = centerX, -totalW, -1 do
+    for xStart = centerX, -totalW, -3 do
         mon.clear()
         drawBorder()
         for i = 1, #word do
