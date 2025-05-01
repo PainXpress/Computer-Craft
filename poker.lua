@@ -307,6 +307,11 @@ function broadcastState()
     end
 end
 
+-- Check if click is in button
+function isClickInButton(x, y, bx, by, bw, bh)
+    return x >= bx and x < bx + bw and y >= by and y < by + bh
+end
+
 -- Main loop
 function main()
     math.randomseed(os.time())
@@ -599,7 +604,7 @@ function main()
                         if p.active then
                             table.insert(handResults, {player = p, hand = evaluateHand(p)})
                         end
-                    }
+                    end
                     table.sort(handResults, function(a, b) return compareHands(a.hand, b.hand) > 0 end)
                     for _, pot in ipairs(pots) do
                         local eligiblePlayers = {}
@@ -610,7 +615,7 @@ function main()
                                     break
                                 end
                             end
-                        }
+                        end
                         if #eligiblePlayers > 0 then
                             local bestHand = eligiblePlayers[1].hand
                             local winners = {}
@@ -618,13 +623,13 @@ function main()
                                 if compareHands(p.hand, bestHand) == 0 then
                                     table.insert(winners, p.player)
                                 end
-                            }
+                            end
                             local rake = math.floor(pot.amount * 0.01)
                             pot.amount = pot.amount - rake
                             local split = math.floor(pot.amount / #winners)
                             for _, winner in ipairs(winners) do
                                 winner.chips = winner.chips + split
-                                winner.showCards = true -- Winners show cards
+                                winner.showCards = true
                                 showdownResponses[winner.id] = "show"
                             end
                             message = message .. winners[1].name .. (#winners > 1 and " and others" or "") .. " win " .. split .. " chips! "
