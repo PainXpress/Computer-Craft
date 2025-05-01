@@ -10,6 +10,7 @@ local modem = peripheral.find("modem")
 if not modem then
     error("No wireless modem found. Please connect a modem.")
 end
+print("Opening modem: " .. peripheral.getName(modem))
 rednet.open(peripheral.getName(modem))
 local state = "lobby"
 local players = {} -- {id, name, chips, diskID, hand, active, betThisRound, showCards}
@@ -32,6 +33,7 @@ local showdownResponses = {} -- {playerID, choice: "muck" or "show"}
 -- Read balance from disk
 function readBalance(diskID)
     if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
+        print("readBalance failed: Invalid or no disk for diskID " .. (diskID or "nil"))
         return nil, "Invalid or no disk inserted"
     end
     local path = drive.getMountPath()
@@ -39,8 +41,10 @@ function readBalance(diskID)
         local file = fs.open(fs.combine(path, "balance.txt"), "r")
         local balance = tonumber(file.readLine())
         file.close()
+        print("readBalance: DiskID " .. diskID .. " has balance " .. balance)
         return balance
     else
+        print("readBalance: No balance.txt for diskID " .. diskID)
         return 0
     end
 end
@@ -48,18 +52,21 @@ end
 -- Write balance to disk
 function writeBalance(diskID, balance)
     if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
+        print("writeBalance failed: Invalid or no disk for diskID " .. (diskID or "nil"))
         return false, "Invalid or no disk inserted"
     end
     local path = drive.getMountPath()
     local file = fs.open(fs.combine(path, "balance.txt"), "w")
     file.write(tostring(balance))
     file.close()
+    print("writeBalance: Wrote " .. balance .. " to diskID " .. diskID)
     return true
 end
 
 -- Read username from disk
 function readUsername(diskID)
     if not drive.isDiskPresent() or drive.getDiskID() ~= diskID then
+        print("readUsername: No disk for diskID " .. (diskID or "nil"))
         return "Unknown"
     end
     local path = drive.getMountPath()
@@ -67,8 +74,10 @@ function readUsername(diskID)
         local file = fs.open(fs.combine(path, "username.txt"), "r")
         local name = file.readLine()
         file.close()
+        print("readUsername: DiskID " .. diskID .. " has name " .. (name or "Unknown"))
         return name or "Unknown"
     else
+        print("readUsername: No username.txt for diskID " .. diskID)
         return "Unknown"
     end
 end
@@ -319,6 +328,7 @@ end
 function main()
     math.randomseed(os.time())
     rednet.host("poker", "server")
+    print("Hosting poker server on ID " .. os.getComputerID())
     while true do
         clearOutput(state == "lobby" and colors.yellow or colors.black)
         writeOutput(1, 1, "Texas Hold'em")
@@ -372,9 +382,11 @@ function main()
         local event, param1, param2, param3 = eventData[1], eventData[2], eventData[3], eventData[4]
         message = ""
 
-        if event == "rednet_message" then
+        if event REN "rednet_message" then
             local senderID, msg = param1, param2
+            print("Received message: " .. msg.type .. " from " .. senderID)
             if msg.type == "join" and state == "lobby" then
+                print("Processing join for player ID " .. senderID .. ", diskID " .. (msg.diskID or "nil"))
                 local balance, err = readBalance(msg.diskID)
                 if balance and balance >= buyIn then
                     balance = balance - buyIn
@@ -391,12 +403,15 @@ function main()
                         })
                         rednet.send(senderID, {type = "joined", name = readUsername(msg.diskID)})
                         message = "Player " .. readUsername(msg.diskID) .. " joined!"
+                        print("Join successful for " .. readUsername(msg.diskID) .. ", sent joined message")
                         playSound("block.note_block.hat")
                     else
                         rednet.send(senderID, {type = "error", message = "Error writing to disk"})
+                        print("Join failed: Error writing to disk for diskID " .. (msg.diskID or "nil"))
                     end
                 else
                     rednet.send(senderID, {type = "error", message = err or "Insufficient chips"})
+                    print("Join failed: " .. (err or "Insufficient chips") .. " for diskID " .. (msg.diskID or "nil"))
                 end
             elseif msg.type == "action" and state == "game" and senderID == players[currentPlayer].id and not showdown then
                 local player = players[currentPlayer]
@@ -427,6 +442,7 @@ function main()
                 else
                     rednet.send(senderID, {type = "error", message = "Invalid action"})
                     message = "Invalid action by " .. player.name
+                    print("Invalid action by player ID " .. senderID)
                 end
                 -- Move to next player
                 currentPlayer = currentPlayer % #players + 1
@@ -584,6 +600,7 @@ function main()
                 if player then
                     showdownResponses[senderID] = msg.choice
                     player.showCards = msg.choice == "show"
+                    print("Showdown choice: " .. msg.choice .. " from player ID " .. senderID)
                 end
                 -- Check if all responses are in
                 local activePlayers = 0
