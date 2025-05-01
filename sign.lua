@@ -1,57 +1,58 @@
--- GearHallow Casino sign for 4x8 (32x32) monitor
 local mon = peripheral.find("monitor")
-if not mon then error("No monitor connected!") end
-
--- Setup
-mon.setTextScale(0.5)
+assert(mon, "Monitor not found")
 term.redirect(mon)
-term.setBackgroundColor(colors.black)
-term.clear()
 
-local w, h = term.getSize()
-local colorsList = {
+mon.setTextScale(0.5)
+term.setBackgroundColor(colors.black)
+
+-- Rainbow colors to cycle through
+local rainbow = {
   colors.red, colors.orange, colors.yellow, colors.lime,
-  colors.green, colors.cyan, colors.blue, colors.purple,
-  colors.magenta
+  colors.cyan, colors.blue, colors.purple, colors.pink
 }
 
-local function drawBorder(color)
-  term.setBackgroundColor(color)
-  for x = 1, w do
-    term.setCursorPos(x, 1)
-    term.write(" ")
-    term.setCursorPos(x, h)
-    term.write(" ")
-  end
-  for y = 2, h - 1 do
-    term.setCursorPos(1, y)
-    term.write(" ")
-    term.setCursorPos(w, y)
-    term.write(" ")
+-- 5x5 block font definition
+local font = {
+  A = {" ### ","#   #","#####","#   #","#   #"},
+  C = {" ### ","#   #","#    ","#   #"," ### "},
+  E = {"#####","#    ","#### ","#    ","#####"},
+  G = {" ### ","#    ","# ## ","#  # "," ### "},
+  H = {"#   #","#   #","#####","#   #","#   #"},
+  I = {"#####","  #  ","  #  ","  #  ","#####"},
+  L = {"#    ","#    ","#    ","#    ","#####"},
+  N = {"#   #","##  #","# # #","#  ##","#   #"},
+  O = {" ### ","#   #","#   #","#   #"," ### "},
+  R = {"#### ","#   #","#### ","#  # ","#   #"},
+  S = {" ####","#    "," ### ","    #","#### "},
+  W = {"#   #","#   #","# # #","# # #"," # # "},
+  " " = {"     ","     ","     ","     ","     "}
+}
+
+-- Draws a string in big letters at (x,y) with a given color
+local function drawBigText(x, y, text, color)
+  text = text:upper()
+  for row = 1, 5 do
+    term.setCursorPos(x, y + row - 1)
+    for i = 1, #text do
+      local char = text:sub(i, i)
+      local glyph = font[char] or font[" "]
+      term.setTextColor(color)
+      term.write(glyph[row] .. " ")
+    end
   end
 end
 
-local function drawCenteredRainbow(y, text, offset)
-  for i = 1, #text do
-    local letter = text:sub(i, i)
-    local col = colorsList[((i + offset) % #colorsList) + 1]
-    term.setCursorPos(math.floor((w - #text) / 2) + i, y)
-    term.setTextColor(col)
-    term.write(letter)
-  end
-end
+-- Get screen size
+local w, h = term.getSize()
 
--- Animation loop
-local tick = 0
+-- Main animation loop
 while true do
-  term.setBackgroundColor(colors.black)
-  term.clear()
-
-  drawBorder(colorsList[(tick % #colorsList) + 1])
-
-  drawCenteredRainbow(13, "GearHallow", tick)
-  drawCenteredRainbow(15, "Casino", tick + 4)
-
-  sleep(0.2)
-  tick = tick + 1
+  for i = 1, #rainbow do
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    -- Center "GearHallow" and "Casino"
+    drawBigText(math.floor((w - (#"GEARHALLOW" * 6 - 1)) / 2), 3, "GearHallow", rainbow[i])
+    drawBigText(math.floor((w - (#"CASINO" * 6 - 1)) / 2), 11, "Casino", rainbow[#rainbow - i + 1])
+    sleep(0.3)
+  end
 end
