@@ -4,8 +4,11 @@
 local drive = peripheral.wrap("left") or error("No disk drive found on left side. Please attach a disk drive to the left.", 0)
 local monitor = peripheral.wrap("right") -- Monitor on right side (optional)
 local conversion_rate = 0.1 -- 1 currency = 0.1 chips (1,000 currency = 100 chips)
-local state = "main"
+local state = "locked"
 local message = ""
+local password = "casino123" -- Change this to your desired password
+local inactivity_timeout = 120 -- 2 minutes in seconds
+local last_input_time = os.clock()
 
 -- Read balance from disk
 function readBalance()
@@ -116,131 +119,203 @@ function clearTerminal()
     term.setTextColor(colors.white)
 end
 
+-- Get hidden password input
+function getPassword()
+    clearTerminal()
+    print("GearHallow Casino Bank")
+    print("Enter password: ")
+    local input = ""
+    term.setCursorBlink(true)
+    while true do
+        local event, param1 = os.pullEvent()
+        if event == "char" then
+            input = input .. param1
+            term.write("*")
+            last_input_time = os.clock()
+        elseif event == "key" and param1 == keys.enter then
+            term.setCursorBlink(false)
+            return input
+        elseif event == "key" and param1 == keys.backspace and #input > 0 then
+            input = input:sub(1, -2)
+            local x, y = term.getCursorPos()
+            term.setCursorPos(x - 1, y)
+            term.write(" ")
+            term.setCursorPos(x - 1, y)
+            last_input_time = os.clock()
+        end
+    end
+end
+
+-- Check password
+function checkPassword()
+    local input = getPassword()
+    if input == password then
+        return true
+    else
+        clearTerminal()
+        print("GearHallow Casino Bank")
+        print("Incorrect password")
+        print("Press any key to retry...")
+        os.pullEvent("char")
+        return false
+    end
+end
+
 -- Main loop
 function main()
-    parallel.waitForAny(
-        function() -- Monitor display loop
-            while true do
-                if state == "main" then
-                    displayWelcome()
-                end
-                os.sleep(0.1)
+    while true do
+        if state == "locked" then
+            displayWelcome()
+            if checkPassword() then
+                state = "main"
+                last_input_time = os.clock()
             end
-        end,
-        function() -- Terminal interaction loop
-            while true do
-                clearTerminal()
-                print("GearHallow Casino Bank")
-                local balance, err = readBalance()
-                if balance then
-                    print("Chip Balance: " .. balance)
-                else
-                    print(err or "Error reading balance")
-                end
-                if message ~= "" then
-                    print(message)
-                end
-                print("")
-                print("[1] Buy Chips")
-                print("[2] Cash Out")
-                print("[3] Check Balance")
-                print("[4] Exit")
-                print("Select option (1-4): ")
-
-                local event, param1 = os.pullEvent("char")
-                message = ""
-
-                if state == "main" then
-                    if param1 == "1" then
-                        state = "buy"
-                    elseif param1 == "2" then
-                        state = "cash"
-                    elseif param1 == "3" then
-                        state = "check"
-                    elseif param1 == "4" then
-                        clearMonitor()
-                        break
-                    else
-                        message = "Press 1, 2, 3, or 4"
+        else
+            parallel.waitForAny(
+                function() -- Monitor display loop
+                    while state ~= "locked" do
+                        if state == "main" then
+                            displayWelcome()
+                        end
+                        os.sleep(0.1)
                     end
-                end
+                end,
+                function() -- Terminal interaction loop
+                    local timer_id = os.startTimer(inactivity_timeout)
+                    while state ~= "locked" do
+                        clearTerminal()
+                        print("GearHallow Casino Bank")
+                        local balance, err = readBalance()
+                        if balance then
+                            print("Chip Balance: " .. balance)
+                        else
+                            print(err or "Error reading balance")
+                        end
+                        if message ~= "" then
+                            print(message)
+                        end
+                        print("")
+                        print("[1] Buy Chips")
+                        print("[2] Cash Out")
+                        print("[3] Check Balance")
+                        print("[4] Exit")
+                        print("[5] Lock")
+                        print("Select option (1-5): ")
 
-                if state == "buy" then
-                    clearTerminal()
-                    print("GearHallow Casino Bank")
-                    print("Enter currency paid (or 'cancel'): ")
-                    local line = io.read()
-                    if line == "cancel" then
-                        state = "main"
-                    else
-                        local currency = tonumber(line)
-                        if currency and currency > 0 then
-                            local chips = math.floor(currency * conversion_rate)
+                        local event, param1, param2, param3 = os.pullEvent()
+                        message = ""
+                        last_input_time = os.clock()
+                        os.cancelTimer(timer_id)
+                        timer_id = os.startTimer(inactivity_timeout)
+
+                        if event == "timer" and param1 == timer_id then
+                            state = "locked"
+                            break
+                        elseif event == "char" and state == "main" then
+                            if param1 == "1" then
+                                state = "buy"
+                            elseif param1 == "2" then
+                                state = "cash"
+                            elseif param1 == "3" then
+                                state = "check"
+                            elseif param1 == "4" then
+                                clearMonitor()
+                                error("Terminated", 0)
+                            elseif param1 == "5" then
+                                state = "locked"
+                                break
+                            else
+                                message = "Press 1, 2, 3, 4, or 5"
+                            end
+                        end
+
+                        if state == "buy" then
+                            clearTerminal()
+                            print("GearHallow Casino Bank")
+                            print("Enter currency paid (or 'cancel'): ")
+                            local line = io.read()
+                            last_input_time = os.clock()
+                            os.cancelTimer(timer_id)
+                            timer_id = os.startTimer(inactivity_timeout)
+                            if line == "cancel" then
+                                state = "main"
+                            else
+                                local currency = tonumber(line)
+                                if currency and currency > 0 then
+                                    local chips = math.floor(currency * conversion_rate)
+                                    local balance, err = readBalance()
+                                    if balance then
+                                        balance = balance + chips
+                                        if writeBalance(balance) then
+                                            message = "Added " .. chips .. " chips"
+                                            if monitor then
+                                                displayResult(chips, true)
+                                            end
+                                        else
+                                            message = "Error writing to disk"
+                                        end
+                                    else
+                                        message = err or "Error reading balance"
+                                    end
+                                    state = "main"
+                                else
+                                    message = "Invalid currency amount"
+                                    state = "main"
+                                end
+                            end
+                        elseif state == "cash" then
+                            clearTerminal()
+                            print("GearHallow Casino Bank")
                             local balance, err = readBalance()
                             if balance then
-                                balance = balance + chips
-                                if writeBalance(balance) then
-                                    message = "Added " .. chips .. " chips"
-                                    if monitor then
-                                        displayResult(chips, true)
+                                local currency = math.floor(balance / conversion_rate)
+                                print("Chips: " .. balance)
+                                print("Pay player: " .. currency .. " currency")
+                                print("[1] Confirm, [2] Cancel")
+                                local event, param1 = os.pullEvent("char")
+                                last_input_time = os.clock()
+                                os.cancelTimer(timer_id)
+                                timer_id = os.startTimer(inactivity_timeout)
+                                if param1 == "1" then
+                                    if writeBalance(0) then
+                                        message = "Cashed out " .. balance .. " chips for " .. currency .. " currency"
+                                        if monitor then
+                                            displayResult(balance, false)
+                                        end
+                                    else
+                                        message = "Error writing to disk"
                                     end
+                                    state = "main"
+                                elseif param1 == "2" then
+                                    state = "main"
                                 else
-                                    message = "Error writing to disk"
+                                    message = "Press 1 or 2"
                                 end
                             else
                                 message = err or "Error reading balance"
+                                state = "main"
                             end
-                            state = "main"
-                        else
-                            message = "Invalid currency amount"
-                            state = "main"
-                        end
-                    end
-                elseif state == "cash" then
-                    clearTerminal()
-                    print("GearHallow Casino Bank")
-                    local balance, err = readBalance()
-                    if balance then
-                        local currency = math.floor(balance / conversion_rate)
-                        print("Chips: " .. balance)
-                        print("Pay player: " .. currency .. " currency")
-                        print("[1] Confirm, [2] Cancel")
-                        local event, param1 = os.pullEvent("char")
-                        if param1 == "1" then
-                            if writeBalance(0) then
-                                message = "Cashed out " .. balance .. " chips for " .. currency .. " currency"
-                                if monitor then
-                                    displayResult(balance, false)
-                                end
+                        elseif state == "check" then
+                            clearTerminal()
+                            print("GearHallow Casino Bank")
+                            local balance, err = readBalance()
+                            if balance then
+                                print("Balance: " .. balance .. " chips")
                             else
-                                message = "Error writing to disk"
+                                print(err or "Error reading balance")
                             end
+                            print("Press any key to continue...")
+                            os.pullEvent("char")
+                            last_input_time = os.clock()
+                            os.cancelTimer(timer_id)
+                            timer_id = os.startTimer(inactivity_timeout)
                             state = "main"
-                        elseif param1 == "2" then
-                            state = "main"
-                        else
-                            message = "Press 1 or 2"
                         end
-                    else
-                        message = err or "Error reading balance"
-                        state = "main"
                     end
-                elseif state == "check" then
-                    clearTerminal()
-                    print("GearHallow Casino Bank")
-                    local balance, err = readBalance()
-                    if balance then
-                        print("Balance: " .. balance .. " chips")
-                    else
-                        print(err or "Error reading balance")
-                    end
-                    print("Press any key to continue...")
-                    os.pullEvent("char")
-                    state = "main"
                 end
-            end
+            )
         end
-    )
+    end
 end
 
 -- Run with termination handling
