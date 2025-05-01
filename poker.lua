@@ -28,11 +28,11 @@ local showdownResponses = {} -- {playerID, choice: "muck" or "show"}
 
 -- Request balance from player
 function readBalance(playerID, diskID)
-    print("Requesting balance for player ID " .. playerID .. ", diskID " .. diskID)
+    print("Requesting balance for player ID " .. playerID .. ", diskID " .. (diskID or "nil"))
     rednet.send(playerID, {type = "read_balance", diskID = diskID})
     local senderID, msg = rednet.receive(5) -- Timeout after 5 seconds
     if senderID == playerID and msg and msg.type == "balance_response" then
-        print("Received balance: " .. (msg.balance or "nil") .. " for diskID " .. diskID)
+        print("Received balance: " .. (msg.balance or "nil") .. " for diskID " .. (diskID or "nil"))
         return msg.balance, msg.error
     end
     print("readBalance failed: No response from player ID " .. playerID)
@@ -41,11 +41,11 @@ end
 
 -- Request balance write to player
 function writeBalance(playerID, diskID, balance)
-    print("Requesting write balance " .. balance .. " for player ID " .. playerID .. ", diskID " .. diskID)
+    print("Requesting write balance " .. balance .. " for player ID " .. playerID .. ", diskID " .. (diskID or "nil"))
     rednet.send(playerID, {type = "write_balance", diskID = diskID, balance = balance})
     local senderID, msg = rednet.receive(5)
     if senderID == playerID and msg and msg.type == "write_response" and msg.success then
-        print("writeBalance: Wrote " .. balance .. " to diskID " .. diskID)
+        print("writeBalance: Wrote " .. balance .. " to diskID " .. (diskID or "nil"))
         return true
     end
     print("writeBalance failed: No response or error for player ID " .. playerID)
@@ -54,11 +54,11 @@ end
 
 -- Read username from player
 function readUsername(playerID, diskID)
-    print("Requesting username for player ID " .. playerID .. ", diskID " .. diskID)
+    print("Requesting username for player ID " .. playerID .. ", diskID " .. (diskID or "nil"))
     rednet.send(playerID, {type = "read_username", diskID = diskID})
     local senderID, msg = rednet.receive(5)
     if senderID == playerID and msg and msg.type == "username_response" then
-        print("Received username: " .. (msg.name or "Unknown") .. " for diskID " .. diskID)
+        print("Received username: " .. (msg.name or "Unknown") .. " for diskID " .. (diskID or "nil"))
         return msg.name or "Unknown"
     end
     print("readUsername: No response from player ID " .. playerID)
@@ -372,36 +372,45 @@ function main()
 
         if event == "rednet_message" then
             local senderID, msg = param1, param2
-            print("Received message: " .. msg.type .. " from " .. senderID)
-            if msg.type == "join" and state == "lobby" then
+            if msg then
+                print("Received message: " .. (msg.type or "nil") .. " from " .. senderID)
+            else
+                print("Received message: nil from " .. senderID)
+            end
+            if msg and msg.type == "join" and state == "lobby" then
                 print("Processing join for player ID " .. senderID .. ", diskID " .. (msg.diskID or "nil"))
-                local balance, err = readBalance(senderID, msg.diskID)
-                if balance and balance >= buyIn then
-                    balance = balance - buyIn
-                    if writeBalance(senderID, msg.diskID, balance) then
-                        table.insert(players, {
-                            id = senderID,
-                            name = readUsername(senderID, msg.diskID),
-                            chips = startingChips,
-                            diskID = msg.diskID,
-                            hand = {},
-                            active = true,
-                            betThisRound = 0,
-                            showCards = false
-                        })
-                        rednet.send(senderID, {type = "joined", name = readUsername(senderID, msg.diskID)})
-                        message = "Player " .. readUsername(senderID, msg.diskID) .. " joined!"
-                        print("Join successful for " .. readUsername(senderID, msg.diskID) .. ", sent joined message")
-                        playSound("block.note_block.hat")
-                    else
-                        rednet.send(senderID, {type = "error", message = "Error writing to disk"})
-                        print("Join failed: Error writing to disk for diskID " .. (msg.diskID or "nil"))
-                    end
+                if not msg.diskID then
+                    rednet.send(senderID, {type = "error", message = "No diskID provided"})
+                    print("Join failed: No diskID provided for player ID " .. senderID)
                 else
-                    rednet.send(senderID, {type = "error", message = err or "Insufficient chips"})
-                    print("Join failed: " .. (err or "Insufficient chips") .. " for diskID " .. (msg.diskID or "nil"))
+                    local balance, err = readBalance(senderID, msg.diskID)
+                    if balance and balance >= buyIn then
+                        balance = balance - buyIn
+                        if writeBalance(senderID, msg.diskID, balance) then
+                            table.insert(players, {
+                                id = senderID,
+                                name = readUsername(senderID, msg.diskID),
+                                chips = startingChips,
+                                diskID = msg.diskID,
+                                hand = {},
+                                active = true,
+                                betThisRound = 0,
+                                showCards = false
+                            })
+                            rednet.send(senderID, {type = "joined", name = readUsername(senderID, msg.diskID)})
+                            message = "Player " .. readUsername(senderID, msg.diskID) .. " joined!"
+                            print("Join successful for " .. readUsername(senderID, msg.diskID) .. ", sent joined message")
+                            playSound("block.note_block.hat")
+                        else
+                            rednet.send(senderID, {type = "error", message = "Error writing to disk"})
+                            print("Join failed: Error writing to disk for diskID " .. (msg.diskID or "nil"))
+                        end
+                    else
+                        rednet.send(senderID, {type = "error", message = err or "Insufficient chips"})
+                        print("Join failed: " .. (err or "Insufficient chips") .. " for diskID " .. (msg.diskID or "nil"))
+                    end
                 end
-            elseif msg.type == "action" and state == "game" and senderID == players[currentPlayer].id and not showdown then
+            elseif msg and msg.type == "action" and state == "game" and senderID == players[currentPlayer].id and not showdown then
                 local player = players[currentPlayer]
                 if msg.action == "fold" then
                     player.active = false
@@ -497,7 +506,10 @@ function main()
                             state = "lobby"
                             for _, p in ipairs(players) do
                                 if p.chips > 0 then
-                                    writeBalance(p.id, p.diskID, (readBalance(p.id, p.diskID) or 0) + p.chips)
+                                    local currentBalance = readBalance(p.id, p.diskID)
+                                    if currentBalance then
+                                        writeBalance(p.id, p.diskID, currentBalance + p.chips)
+                                    end
                                 end
                             end
                             players = {}
@@ -577,7 +589,7 @@ function main()
                         broadcastState()
                     end
                 end
-            elseif msg.type == "showdown_choice" and state == "game" and showdown then
+            elseif msg and msg.type == "showdown_choice" and state == "game" and showdown then
                 local player
                 for _, p in ipairs(players) do
                     if p.id == senderID and p.active then
@@ -662,7 +674,10 @@ function main()
                         state = "lobby"
                         for _, p in ipairs(players) do
                             if p.chips > 0 then
-                                writeBalance(p.id, p.diskID, (readBalance(p.id, p.diskID) or 0) + p.chips)
+                                local currentBalance = readBalance(p.id, p.diskID)
+                                if currentBalance then
+                                    writeBalance(p.id, p.diskID, currentBalance + p.chips)
+                                end
                             end
                         end
                         players = {}
