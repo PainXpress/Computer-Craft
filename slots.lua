@@ -1,7 +1,7 @@
 -- Slot Machine for Casino Debit Cards
 -- Save as 'slots.lua' on slot machine computer
 
-local drive = peripheral.find("drive")
+local drive = peripheral.wrap("left")
 if not drive then
     error("No disk drive found. Please connect a disk drive.")
 end
@@ -56,16 +56,16 @@ function writeOutput(x, y, text)
     end
 end
 
--- Clear monitor or terminal
-function clearOutput()
+-- Clear monitor or terminal with specified color
+function clearOutput(color)
     if monitor then
         monitor.clear()
         monitor.setTextScale(0.5)
-        monitor.setBackgroundColor(colors.black)
+        monitor.setBackgroundColor(color)
         monitor.setTextColor(colors.white)
     else
         term.clear()
-        term.setBackgroundColor(colors.black)
+        term.setBackgroundColor(color)
         term.setTextColor(colors.white)
     end
 end
@@ -107,11 +107,21 @@ function calculateWin(reels, bet)
     return 0
 end
 
+-- Play sound effect
+function playSound(sound)
+    local success, result = pcall(function()
+        commands.exec("playsound " .. sound .. " block @a ~ ~ ~ 1 1")
+    end)
+    if not success then
+        -- Silently fail if commands.exec is disabled or lacks permissions
+    end
+end
+
 -- Main loop
 function main()
     math.randomseed(os.time())
     while true do
-        clearOutput()
+        clearOutput(state == "main" and colors.yellow or colors.black)
         writeOutput(1, 1, "Slot Machine")
         local balance, err = readBalance()
         if balance then
@@ -125,11 +135,9 @@ function main()
             if monitor then
                 drawButton(2, 6, 10, 3, "Bet 10", colors.green)
                 drawButton(14, 6, 10, 3, "Bet 50", colors.blue)
-                drawButton(2, 10, 22, 3, "Exit", colors.red)
             else
                 writeOutput(1, 6, "[1] Bet 10")
                 writeOutput(1, 7, "[2] Bet 50")
-                writeOutput(1, 8, "[3] Exit")
             end
         elseif state == "spin" then
             local reels = spinReels()
@@ -137,12 +145,14 @@ function main()
             local win = calculateWin(reels, bet)
             if win > 0 then
                 writeOutput(2, 7, "Win: " .. win .. " chips!")
+                playSound("entity.player.levelup")
                 balance = balance + win
                 if not writeBalance(balance) then
                     message = "Error writing to disk"
                 end
             else
                 writeOutput(2, 7, "No win")
+                playSound("block.note_block.bass")
             end
             if monitor then
                 drawButton(2, 9, 22, 3, "Continue", colors.green)
@@ -165,18 +175,14 @@ function main()
                     bet = 10
                 elseif isClickInButton(param2, param3, 14, 6, 10, 3) then
                     bet = 50
-                elseif isClickInButton(param2, param3, 2, 10, 22, 3) then
-                    break
                 end
             else
                 if param1 == "1" then
                     bet = 10
                 elseif param1 == "2" then
                     bet = 50
-                elseif param1 == "3" then
-                    break
                 else
-                    message = "Press 1, 2, or 3"
+                    message = "Press 1 or 2"
                 end
             end
             if bet > 0 then
