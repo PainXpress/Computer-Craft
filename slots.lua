@@ -18,7 +18,6 @@ local bet = 0
 local message = ""
 local reels = nil
 local win = 0
-local spinProcessed = false
 
 -- Read balance from disk
 function readBalance()
@@ -143,23 +142,8 @@ function main()
                 writeOutput(1, 7, "[2] Bet 50")
             end
         elseif state == "spin" then
-            if not spinProcessed then
-                reels = spinReels()
-                win = calculateWin(reels, bet)
-                spinProcessed = true
-            end
             writeOutput(2, 6, "Reels: " .. table.concat(reels, " | "))
-            if win > 0 then
-                writeOutput(2, 7, "Win: " .. win .. " chips!")
-                playSound("entity.player.levelup")
-                balance = balance + win
-                if not writeBalance(balance) then
-                    message = "Error writing to disk"
-                end
-            else
-                writeOutput(2, 7, "No win")
-                playSound("block.note_block.bass")
-            end
+            writeOutput(2, 7, win > 0 and "Win: " .. win .. " chips!" or "No win")
             if monitor then
                 drawButton(2, 9, 22, 3, "Continue", colors.green)
             else
@@ -167,62 +151,68 @@ function main()
             end
         end
 
-        local event, param1, param2, param3
-        if monitor then
-            event, param1, param2, param3 = os.pullEvent("monitor_touch")
-        else
-            event, param1 = os.pullEvent("char")
-        end
+        local eventData = {os.pullEvent()}
+        local event, param1, param2, param3 = eventData[1], eventData[2], eventData[3], eventData[4]
         message = ""
 
-        if state == "main" then
-            if monitor then
+        if state == "main" and (event == "monitor_touch" or event == "char") then
+            local selectedBet = 0
+            if monitor and event == "monitor_touch" then
                 if isClickInButton(param2, param3, 2, 6, 10, 3) then
-                    bet = 10
+                    selectedBet = 10
                 elseif isClickInButton(param2, param3, 14, 6, 10, 3) then
-                    bet = 50
+                    selectedBet = 50
                 else
                     message = "Click Bet 10 or Bet 50"
                 end
-            else
+            elseif event == "char" then
                 if param1 == "1" then
-                    bet = 10
+                    selectedBet = 10
                 elseif param1 == "2" then
-                    bet = 50
+                    selectedBet = 50
                 else
                     message = "Press 1 or 2"
                 end
             end
-            if bet > 0 then
+            if selectedBet > 0 then
                 local balance, err = readBalance()
-                if balance and balance >= bet then
-                    balance = balance - bet
+                if balance and balance >= selectedBet then
+                    balance = balance - selectedBet
                     if writeBalance(balance) then
+                        bet = selectedBet
+                        reels = spinReels()
+                        win = calculateWin(reels, bet)
+                        if win > 0 then
+                            playSound("entity.player.levelup")
+                            balance = balance + win
+                            writeBalance(balance)
+                        else
+                            playSound("block.note_block.bass")
+                        end
                         state = "spin"
-                        spinProcessed = false
                     else
                         message = "Error writing to disk"
                     end
                 else
                     message = err or "Insufficient chips"
-                    bet = 0
                 end
             end
-        elseif state == "spin" then
-            if monitor then
+        elseif state == "spin" and (event == "monitor_touch" or event == "char") then
+            local continueClicked = false
+            if monitor and event == "monitor_touch" then
                 if isClickInButton(param2, param3, 2, 9, 22, 3) then
-                    state = "main"
-                    bet = 0
-                else
-                    message = "Click Continue to play again"
+                    continueClicked = true
                 end
+            elseif event == "char" and param1 == "1" then
+                continueClicked = true
+            end
+            if continueClicked then
+                state = "main"
+                bet = 0
+                reels = nil
+                win = 0
             else
-                if param1 == "1" then
-                    state = "main"
-                    bet = 0
-                else
-                    message = "Press 1 to continue"
-                end
+                message = monitor and "Click Continue to play again" or "Press 1 to continue"
             end
         end
     end
