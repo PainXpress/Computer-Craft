@@ -2,22 +2,42 @@ local SIDE = "left" -- Change this to match the disk drive side
 local SPIN_COST = 10
 local symbols = {"🍒", "🔔", "💎", "7️⃣"}
 
--- Reads chip balance from disk
-local function getBalance()
-    if not disk.isPresent(SIDE) then return nil, "Insert your debit card." end
-    local file = fs.open(SIDE.."/balance.txt", "r")
-    if not file then return 0 end
-    local balance = tonumber(file.readAll())
-    file.close()
-    return balance or 0
+-- Finds the mounted disk path (e.g., /disk)
+local function getDiskPath()
+    for _, side in ipairs(peripheral.getNames()) do
+        if peripheral.getType(side) == "drive" and disk.isDiskPresent(side) then
+            return disk.getMountPath(side)
+        end
+    end
+    return nil
 end
 
--- Writes chip balance to disk
-local function setBalance(amount)
-    local file = fs.open(SIDE.."/balance.txt", "w")
-    file.write(tostring(amount))
-    file.close()
+-- Reads chip balance from balance.txt
+function getBalance()
+    local path = getDiskPath()
+    if not path then return nil, "No debit card found." end
+
+    local f = fs.open(path .. "/balance.txt", "r")
+    if not f then return nil, "balance.txt not found on card." end
+
+    local contents = f.readAll()
+    f.close()
+    return tonumber(contents) or 0
 end
+
+-- Writes chip balance to balance.txt
+function setBalance(newBalance)
+    local path = getDiskPath()
+    if not path then return false, "No debit card found." end
+
+    local f = fs.open(path .. "/balance.txt", "w")
+    if not f then return false, "Could not write to balance.txt." end
+
+    f.write(tostring(newBalance))
+    f.close()
+    return true
+end
+
 
 -- Spin the reels (random symbols)
 local function spinReels()
