@@ -1,7 +1,10 @@
 -- Slot Machine for Casino Debit Cards
 -- Save as 'slots.lua' on slot machine computer
 
-local drive = peripheral.wrap("right")
+local drive = peripheral.find("drive")
+if not drive then
+    error("No disk drive found. Please connect a disk drive.")
+end
 local monitor = peripheral.find("monitor")
 local symbols = {"7", "Cherry", "Bar", "Bell"}
 local payouts = {
