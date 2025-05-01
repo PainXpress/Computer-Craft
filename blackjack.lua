@@ -409,4 +409,22 @@ function main()
             end
         elseif state == "result" and (event == "monitor_touch" or event == "char") then
             local nextHand = false
-            if monitor and event == "monitor_touch" and isClickInButton(param2, param3,
+            if monitor and event == "monitor_touch" and isClickInButton(param2, param3, 2, 10, 22, 3) then
+                nextHand = true
+            elseif event == "char" and param1 == "1" then
+                nextHand = true
+            end
+            if nextHand then
+                state = "main"
+                bet = 0
+                playerHands = {{cards = {}, active = true}}
+                dealerHand = {}
+                currentHand = 1
+            else
+                message = monitor and "Click Next Hand" or "Press 1 for next hand"
+            end
+        end
+    end
+end
+
+main()
