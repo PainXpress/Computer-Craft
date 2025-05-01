@@ -8,10 +8,10 @@ end
 local monitor = peripheral.find("monitor")
 local symbols = {"7", "Cherry", "Bar", "Bell"}
 local payouts = {
-    {symbol = "7", count = 3, multiplier = 50},
-    {symbol = "Cherry", count = 3, multiplier = 20},
-    {symbol = "Bar", count = 3, multiplier = 10},
-    {symbol = "Bell", count = 3, multiplier = 5}
+    {symbol = "7", count = 3, multiplier = 35},
+    {symbol = "Cherry", count = 3, multiplier = 14},
+    {symbol = "Bar", count = 3, multiplier = 7},
+    {symbol = "Bell", count = 3, multiplier = 3}
 }
 local state = "main"
 local bet = 0
