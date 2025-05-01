@@ -1,8 +1,8 @@
 -- Bank System for Casino Debit Cards with Server Currency
 -- Save as 'bank.lua' on the bank computer
 
-local drive = peripheral.wrap("right") -- Disk drive on the right
-local monitor = peripheral.find("monitor") -- Optional monitor
+local drive = peripheral.wrap("left") or error("No disk drive found on left side. Please attach a disk drive to the left.", 0)
+local monitor = peripheral.wrap("right") -- Monitor on right side (optional)
 local conversion_rate = 0.1 -- 1 currency = 0.1 chips (1,000 currency = 100 chips)
 local state = "main"
 local input = ""
