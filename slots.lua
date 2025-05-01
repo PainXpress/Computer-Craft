@@ -61,47 +61,41 @@ while true do
     if not balance then
         print("Error: " .. err)
         sleep(2)
-        goto continue
-    end
-
-    if balance < SPIN_COST then
+    elseif balance < SPIN_COST then
         print("Not enough chips! You need at least 10.")
         sleep(2)
-        goto continue
-    end
-
-    -- Deduct cost
-    balance = balance - SPIN_COST
-    setBalance(balance)
-
-    -- Spin
-    local reels = spinReels()
-    local winnings = calculateWinnings(reels)
-    balance = balance + winnings
-    setBalance(balance)
-
-    -- Show result
-    term.clear()
-    term.setCursorPos(1,1)
-    print("🎰 Spinning...")
-    sleep(1)
-    print(table.concat(reels, " "))
-    print("")
-
-    if winnings > 0 then
-        print("You won " .. winnings .. " chips!")
     else
-        print("No win. Better luck next time!")
-    end
+        -- Deduct cost
+        balance = balance - SPIN_COST
+        setBalance(balance)
 
-    print("Current balance: " .. balance .. " chips")
-    print("Play again? (y/n)")
-    local answer = read()
-    if answer:lower() ~= "y" then
-        break
-    end
+        -- Spin
+        local reels = spinReels()
+        local winnings = calculateWinnings(reels)
+        balance = balance + winnings
+        setBalance(balance)
 
-    ::continue::
+        -- Show result
+        term.clear()
+        term.setCursorPos(1,1)
+        print("🎰 Spinning...")
+        sleep(1)
+        print(table.concat(reels, " "))
+        print("")
+
+        if winnings > 0 then
+            print("You won " .. winnings .. " chips!")
+        else
+            print("No win. Better luck next time!")
+        end
+
+        print("Current balance: " .. balance .. " chips")
+        print("Play again? (y/n)")
+        local answer = read()
+        if answer:lower() ~= "y" then
+            break
+        end
+    end
 end
 
 print("Thanks for playing!")
