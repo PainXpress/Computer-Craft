@@ -4,8 +4,8 @@ print("Opening modem: " .. peripheral.getName(modem))
 rednet.open("top")  -- Modem on top side
 
 local monitor = peripheral.find("monitor")
-local disk = peripheral.find("disk") or error("No disk drive found")
-local diskID = peripheral.getID(disk)
+local disk = peripheral.find("disk")
+local diskID = disk and peripheral.getID(disk) or "default"
 local state = "searching"
 local serverID = nil
 local playerName = nil
@@ -13,43 +13,52 @@ local chips = 0
 local hand = {}
 local joining = false
 
--- Read balance from disk
+-- Read balance from disk or use default
 function readBalance(diskID)
-    if not disk.isDiskPresent(diskID) then return nil, "No disk" end
-    local balance = fs.open(fs.combine(disk.getMountPath(diskID), "balance.txt"), "r")
-    if balance then
-        local bal = tonumber(balance.readLine())
-        balance.close()
-        print("readBalance: Balance read = " .. (bal or "nil"))
-        return bal
+    if disk and disk.isDiskPresent() then
+        local balance = fs.open(fs.combine(disk.getMountPath(), "balance.txt"), "r")
+        if balance then
+            local bal = tonumber(balance.readLine())
+            balance.close()
+            print("readBalance: Balance read = " .. (bal or "nil"))
+            return bal
+        end
+        return nil, "No balance file"
     end
-    return nil, "No balance file"
+    print("readBalance: No disk, using default balance = 100")
+    return 100  -- Default balance if no disk
 end
 
--- Write balance to disk
+-- Write balance to disk or ignore if no disk
 function writeBalance(diskID, balance)
-    if not disk.isDiskPresent(diskID) then return false end
-    local file = fs.open(fs.combine(disk.getMountPath(diskID), "balance.txt"), "w")
-    if file then
-        file.write(tostring(balance))
-        file.close()
-        print("writeBalance: Balance written = " .. balance)
-        return true
+    if disk and disk.isDiskPresent() then
+        local file = fs.open(fs.combine(disk.getMountPath(), "balance.txt"), "w")
+        if file then
+            file.write(tostring(balance))
+            file.close()
+            print("writeBalance: Balance written = " .. balance)
+            return true
+        end
+        return false
     end
+    print("writeBalance: No disk, balance not saved")
     return false
 end
 
--- Read username from disk
+-- Read username from disk or use default
 function readUsername(diskID)
-    if not disk.isDiskPresent(diskID) then return "Unknown" end
-    local file = fs.open(fs.combine(disk.getMountPath(diskID), "username.txt"), "r")
-    if file then
-        local name = file.readLine() or "Unknown"
-        file.close()
-        print("readUsername: Name read = " .. name)
-        return name
+    if disk and disk.isDiskPresent() then
+        local file = fs.open(fs.combine(disk.getMountPath(), "username.txt"), "r")
+        if file then
+            local name = file.readLine() or "Unknown"
+            file.close()
+            print("readUsername: Name read = " .. name)
+            return name
+        end
+        return "Unknown"
     end
-    return "Unknown"
+    print("readUsername: No disk, using default name = Player")
+    return "Player"  -- Default name if no disk
 end
 
 -- Write output to monitor
