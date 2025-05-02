@@ -19,35 +19,70 @@ local showdown = false
 
 -- Disk functions
 function readBalance()
-    if not drive.isDiskPresent() then return nil, "No disk" end
+    if not drive.isDiskPresent() then
+        print("readBalance: No disk present")
+        return nil, "No disk"
+    end
     local path = drive.getMountPath()
-    local file = fs.open(fs.combine(path, "balance.txt"), "r")
+    if not path then
+        print("readBalance: No mount path")
+        return nil, "No mount path"
+    end
+    local filePath = fs.combine(path, "balance.txt")
+    if not fs.exists(filePath) then
+        print("readBalance: balance.txt not found")
+        return nil, "balance.txt not found"
+    end
+    local file = fs.open(filePath, "r")
     if file then
         local bal = tonumber(file.readLine())
         file.close()
+        print("readBalance: Balance read = " .. (bal or "nil"))
         return bal or 0
     end
-    return 0
+    print("readBalance: Failed to open file")
+    return nil, "Failed to read file"
 end
 
 function writeBalance(balance)
-    if not drive.isDiskPresent() then return false end
+    if not drive.isDiskPresent() then
+        print("writeBalance: No disk present")
+        return false
+    end
     local path = drive.getMountPath()
+    if not path then
+        print("writeBalance: No mount path")
+        return false
+    end
     local file = fs.open(fs.combine(path, "balance.txt"), "w")
-    file.write(tostring(balance))
-    file.close()
-    return true
+    if file then
+        file.write(tostring(balance))
+        file.close()
+        print("writeBalance: Wrote balance = " .. balance)
+        return true
+    end
+    print("writeBalance: Failed to write file")
+    return false
 end
 
 function readUsername()
-    if not drive.isDiskPresent() then return "Unknown" end
+    if not drive.isDiskPresent() then
+        print("readUsername: No disk present")
+        return "Unknown"
+    end
     local path = drive.getMountPath()
+    if not path then
+        print("readUsername: No mount path")
+        return "Unknown"
+    end
     local file = fs.open(fs.combine(path, "username.txt"), "r")
     if file then
         local name = file.readLine()
         file.close()
+        print("readUsername: Name read = " .. (name or "Unknown"))
         return name or "Unknown"
     end
+    print("readUsername: No username.txt, using default")
     return "Unknown"
 end
 
@@ -94,24 +129,37 @@ end
 -- Join server with retries
 local function joinServer()
     serverID = rednet.lookup("poker", "server")
-    if not serverID then return false end
+    if not serverID then
+        print("joinServer: Server not found")
+        return false
+    end
     diskID = drive.getDiskID()
+    if not diskID then
+        print("joinServer: No diskID")
+        return false
+    end
     for i = 1, 3 do
         print("Attempt " .. i .. " to join server " .. serverID)
         rednet.send(serverID, {type = "join", diskID = diskID})
-        local id, msg = rednet.receive(5)
-        if id == serverID and msg and msg.type == "joined" then
-            name = msg.name or readUsername()
-            chips = 1000
-            local balance = readBalance() or 0
-            writeBalance(balance - 100)  -- Buy-in
-            state = "game"
-            return true
-        elseif msg and msg.type == "error" then
-            writeOutput(1, 5, "Error: " .. msg.message)
-            return false
+        local timerID = os.startTimer(5)
+        while true do
+            local event, param1, param2 = os.pullEvent()
+            if event == "rednet_message" then
+                local id, msg = param1, param2
+                if id == serverID and msg and msg.type == "joined" then
+                    print("joinServer: Success, joined as " .. (msg.name or "Unknown"))
+                    return true
+                elseif msg and msg.type == "error" then
+                    print("joinServer: Error - " .. (msg.message or "Unknown error"))
+                    writeOutput(1, 5, "Error: " .. (msg.message or "Unknown"))
+                    return false
+                end
+            elseif event == "timer" and param1 == timerID then
+                break
+            end
         end
     end
+    print("joinServer: Failed after 3 attempts")
     return false
 end
 
@@ -124,18 +172,30 @@ while true do
         writeOutput(1, 3, "Searching for server...")
         if not drive.isDiskPresent() then
             writeOutput(1, 5, "Insert a disk")
-        elseif readBalance() >= 100 then
-            if joinServer() then
-                print("Joined as " .. name)
-            end
         else
-            writeOutput(1, 5, "Insufficient chips: " .. (readBalance() or 0) .. "/100")
+            local balance, err = readBalance()
+            if balance and balance >= 100 then
+                if joinServer() then
+                    name = readUsername()
+                    chips = 1000
+                    local balance = readBalance() or 0
+                    writeBalance(balance - 100)  -- Buy-in
+                    state = "game"
+                    print("Joined as " .. name)
+                end
+            else
+                writeOutput(1, 5, "Insufficient chips: " .. (balance or 0) .. "/100")
+            end
         end
     elseif state == "game" then
         writeOutput(1, 3, "Player: " .. name .. " | Chips: " .. chips)
-        local commStr = "Community: " .. table.concat(communityCards, function(c) return c.rank .. c.suit .. " " end)
+        local handStr = "Hand: " .. (hand[1] and (hand[1].rank .. hand[1].suit) or "") .. " " .. (hand[2] and (hand[2].rank .. hand[2].suit) or "")
+        writeOutput(1, 4, handStr)
+        local commStr = "Community: "
+        for _, card in ipairs(communityCards) do commStr = commStr .. (card.rank or "?") .. (card.suit or "?") .. " " end
         writeOutput(1, 6, commStr)
-        local potStr = "Pots: " .. table.concat(pots, function(p, i) return (i > 1 and "Side " or "Main ") .. p.amount .. " " end)
+        local potStr = "Pots: "
+        for i, pot in ipairs(pots) do potStr = potStr .. (i > 1 and "Side " or "Main ") .. pot.amount .. " " end
         writeOutput(1, 7, potStr)
         writeOutput(1, 8, "Current Bet: " .. currentBet)
         if showdown then
@@ -155,16 +215,16 @@ while true do
             if msg and type(msg) == "table" and senderID == serverID then
                 print("Received: " .. (msg.type or "nil"))
                 if msg.type == "hand" then
-                    hand = msg.cards
-                    writeOutput(1, 4, "Hand: " .. hand[1].rank .. hand[1].suit .. " " .. hand[2].rank .. hand[2].suit)
+                    hand = msg.cards or {}
+                    writeOutput(1, 4, "Hand: " .. (hand[1] and (hand[1].rank .. hand[1].suit) or "") .. " " .. (hand[2] and (hand[2].rank .. hand[2].suit) or ""))
                 elseif msg.type == "state" then
-                    communityCards = msg.communityCards
-                    pots = msg.pots
-                    currentBet = msg.currentBet
-                    currentPlayer = msg.currentPlayer
-                    blinds = msg.blinds
-                    round = msg.round
-                    showdown = msg.showdown
+                    communityCards = msg.communityCards or {}
+                    pots = msg.pots or {}
+                    currentBet = msg.currentBet or 0
+                    currentPlayer = msg.currentPlayer or 0
+                    blinds = msg.blinds or {}
+                    round = msg.round or ""
+                    showdown = msg.showdown or false
                 elseif msg.type == "showdown" then
                     showdown = true
                 elseif msg.type == "eliminated" then
@@ -172,13 +232,19 @@ while true do
                     writeOutput(1, 3, "Eliminated! Reinsert disk to rejoin.")
                 elseif msg.type == "read_balance" then
                     local bal, err = readBalance()
+                    print("Sending read_balance_response: balance=" .. (bal or "nil") .. ", error=" .. (err or "nil"))
                     rednet.send(serverID, {type = "read_balance_response", balance = bal, error = err})
                 elseif msg.type == "write_balance" then
                     local success = writeBalance(msg.data.balance)
+                    print("Sending write_balance_response: success=" .. tostring(success))
                     rednet.send(serverID, {type = "write_balance_response", success = success})
                 elseif msg.type == "read_username" then
-                    rednet.send(serverID, {type = "read_username_response", name = readUsername()})
+                    local uname = readUsername()
+                    print("Sending read_username_response: name=" .. uname)
+                    rednet.send(serverID, {type = "read_username_response", name = uname})
                 end
+            else
+                print("Invalid message from " .. (senderID or "unknown"))
             end
         elseif event == "monitor_touch" and state == "game" then
             local x, y = param2, param3
