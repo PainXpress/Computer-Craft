@@ -1,4 +1,4 @@
--- GearHallow Casino Flashy Scrolling Sign with Border (Faster Scroll)
+-- GearHallow Casino Flashy Scrolling Sign with Flashing Border (Faster Scroll)
 
 local mon = peripheral.find("monitor")
 assert(mon, "Monitor not found")
@@ -45,9 +45,11 @@ local function drawLetter(char, x, y, scale, color)
     end
 end
 
--- Draw border
+-- Draw border with flashing colors
+local borderColors = {colors.cyan, colors.pink, colors.yellow}
+local borderColorIndex = 1
 local function drawBorder()
-    mon.setTextColor(colors.white)
+    mon.setTextColor(borderColors[borderColorIndex])
     for x=1,monW do
         mon.setCursorPos(x,1)   mon.write("═")
         mon.setCursorPos(x,monH) mon.write("═")
@@ -78,6 +80,7 @@ local function scrollWord(word, color)
         for i = 1, #word do
             drawLetter(word:sub(i,i), xStart + (i-1)*(letterW+spacing), yStart, scale, color)
         end
+        borderColorIndex = borderColorIndex % #borderColors + 1
         sleep(0.05)
     end
     -- 2) Pause in center
@@ -89,6 +92,7 @@ local function scrollWord(word, color)
         for i = 1, #word do
             drawLetter(word:sub(i,i), xStart + (i-1)*(letterW+spacing), yStart, scale, color)
         end
+        borderColorIndex = borderColorIndex % #borderColors + 1
         sleep(0.05)
     end
 end
