@@ -50,7 +50,7 @@ local borderColors = {colors.cyan, colors.pink, colors.yellow}
 local borderColorIndex = 1
 local function drawBorder()
     mon.setTextColor(borderColors[borderColorIndex])
-    -- Outer layer (original)
+    -- Outer layer
     for x=1,monW do
         mon.setCursorPos(x,1)   mon.write("-")
         mon.setCursorPos(x,monH) mon.write("-")
@@ -58,14 +58,14 @@ local function drawBorder()
     for y=1,monH do
         mon.setCursorPos(1,y)   mon.write("|")
         mon.setCursorPos(monW,y) mon.write("|")
-    }
+    end
     mon.setCursorPos(1,1)       mon.write("+")
     mon.setCursorPos(monW,1)    mon.write("+")
     mon.setCursorPos(1,monH)     mon.write("+")
     mon.setCursorPos(monW,monH)  mon.write("+")
     
-    -- Inner layer (new)
-    if monW > 2 and monH > 2 then -- Ensure monitor is large enough
+    -- Inner layer
+    if monW > 2 and monH > 2 then
         for x=2,monW-1 do
             mon.setCursorPos(x,2)       mon.write("-")
             mon.setCursorPos(x,monH-1)  mon.write("-")
@@ -89,6 +89,8 @@ local function scrollWord(word, color)
     local totalW = #word * letterW + (#word - 1) * spacing
     local centerX = math.floor((monW - totalW) / 2) + 1
     local yStart = math.floor((monH - 5 * scale) / 2) + 1
+    local framesPerFlash = 10 -- 0.5 seconds / 0.05 seconds per frame
+    local frameCount = 0
 
     -- 1) Move in: from off-screen right to center
     for xStart = monW + 1, centerX, -3 do
@@ -97,19 +99,38 @@ local function scrollWord(word, color)
         for i = 1, #word do
             drawLetter(word:sub(i,i), xStart + (i-1)*(letterW+spacing), yStart, scale, color)
         end
-        borderColorIndex = borderColorIndex % #borderColors + 1
+        frameCount = frameCount + 1
+        if frameCount >= framesPerFlash then
+            borderColorIndex = borderColorIndex % #borderColors + 1
+            frameCount = 0
+        end
         sleep(0.05)
     end
-    -- 2) Pause in center
-    sleep(2)
+
+    -- 2) Pause in center with flashing border
+    for pauseStep = 1, 4 do -- 4 steps * 0.5 seconds = 2 seconds
+        mon.clear()
+        drawBorder()
+        for i = 1, #word do
+            drawLetter(word:sub(i,i), centerX + (i-1)*(letterW+spacing), yStart, scale, color)
+        end
+        borderColorIndex = borderColorIndex % #borderColors + 1
+        sleep(0.5)
+    end
+
     -- 3) Move out: from center to off-screen left
+    frameCount = 0 -- Reset for move-out phase
     for xStart = centerX, -totalW, -3 do
         mon.clear()
         drawBorder()
         for i = 1, #word do
             drawLetter(word:sub(i,i), xStart + (i-1)*(letterW+spacing), yStart, scale, color)
         end
-        borderColorIndex = borderColorIndex % #borderColors + 1
+        frameCount = frameCount + 1
+        if frameCount >= framesPerFlash then
+            borderColorIndex = borderColorIndex % #borderColors + 1
+            frameCount = 0
+        end
         sleep(0.05)
     end
 end
