@@ -141,137 +141,140 @@ local function joinServer()
     for i = 1, 3 do
         print("Attempt " .. i .. " to join server " .. serverID)
         rednet.send(serverID, {type = "join", diskID = diskID})
-        local timerID = os.startTimer(5)
-        while true do
-            local event, param1, param2 = os.pullEvent()
-            if event == "rednet_message" then
-                local id, msg = param1, param2
-                if id == serverID and msg and msg.type == "joined" then
-                    print("joinServer: Success, joined as " .. (msg.name or "Unknown"))
-                    return true
-                elseif msg and msg.type == "error" then
-                    print("joinServer: Error - " .. (msg.message or "Unknown error"))
-                    writeOutput(1, 5, "Error: " .. (msg.message or "Unknown"))
-                    return false
-                end
-            elseif event == "timer" and param1 == timerID then
-                break
-            end
+        local id, msg = rednet.receive(5)
+        if id == serverID and msg and msg.type == "joined" then
+            print("joinServer: Success, joined as " .. (msg.name or "Unknown"))
+            return true
+        elseif id == serverID and msg and msg.type == "error" then
+            print("joinServer: Error - " .. (msg.message or "Unknown error"))
+            writeOutput(1, 5, "Error: " .. (msg.message or "Unknown"))
+            return false
         end
     end
     print("joinServer: Failed after 3 attempts")
     return false
 end
 
--- Main loop
-while true do
-    clearOutput(colors.black)
-    writeOutput(1, 1, "Texas Hold'em")
-
-    if state == "searching" then
-        writeOutput(1, 3, "Searching for server...")
-        if not drive.isDiskPresent() then
-            writeOutput(1, 5, "Insert a disk")
+-- Handle rednet messages
+local function handleRednet()
+    while true do
+        local senderID, msg = rednet.receive()
+        if msg and type(msg) == "table" and senderID == serverID then
+            print("Received: " .. (msg.type or "nil"))
+            if msg.type == "hand" then
+                hand = msg.cards or {}
+            elseif msg.type == "state" then
+                communityCards = msg.communityCards or {}
+                pots = msg.pots or {}
+                currentBet = msg.currentBet or 0
+                currentPlayer = msg.currentPlayer or 0
+                blinds = msg.blinds or {}
+                round = msg.round or ""
+                showdown = msg.showdown or false
+            elseif msg.type == "showdown" then
+                showdown = true
+            elseif msg.type == "eliminated" then
+                state = "eliminated"
+            elseif msg.type == "read_balance" then
+                local bal, err = readBalance()
+                print("Sending read_balance_response: balance=" .. (bal or "nil") .. ", error=" .. (err or "nil"))
+                rednet.send(serverID, {type = "read_balance_response", balance = bal, error = err})
+            elseif msg.type == "write_balance" then
+                local success = writeBalance(msg.data.balance)
+                print("Sending write_balance_response: success=" .. tostring(success))
+                rednet.send(serverID, {type = "write_balance_response", success = success})
+            elseif msg.type == "read_username" then
+                local uname = readUsername()
+                print("Sending read_username_response: name=" .. uname)
+                rednet.send(serverID, {type = "read_username_response", name = uname})
+            end
         else
-            local balance, err = readBalance()
-            if balance and balance >= 100 then
-                if joinServer() then
-                    name = readUsername()
-                    chips = 1000
-                    local balance = readBalance() or 0
-                    writeBalance(balance - 100)  -- Buy-in
-                    state = "game"
-                    print("Joined as " .. name)
-                end
-            else
-                writeOutput(1, 5, "Insufficient chips: " .. (balance or 0) .. "/100")
-            end
+            print("Invalid message from " .. (senderID or "unknown"))
         end
-    elseif state == "game" then
-        writeOutput(1, 3, "Player: " .. name .. " | Chips: " .. chips)
-        local handStr = "Hand: " .. (hand[1] and (hand[1].rank .. hand[1].suit) or "") .. " " .. (hand[2] and (hand[2].rank .. hand[2].suit) or "")
-        writeOutput(1, 4, handStr)
-        local commStr = "Community: "
-        for _, card in ipairs(communityCards) do commStr = commStr .. (card.rank or "?") .. (card.suit or "?") .. " " end
-        writeOutput(1, 6, commStr)
-        local potStr = "Pots: "
-        for i, pot in ipairs(pots) do potStr = potStr .. (i > 1 and "Side " or "Main ") .. pot.amount .. " " end
-        writeOutput(1, 7, potStr)
-        writeOutput(1, 8, "Current Bet: " .. currentBet)
-        if showdown then
-            drawButton(2, 10, 10, 3, "Muck", colors.red)
-            drawButton(14, 10, 10, 3, "Show", colors.green)
-        elseif currentPlayer == os.getComputerID() then
-            drawButton(2, 10, 10, 3, "Check", currentBet == 0 and colors.green or colors.gray)
-            drawButton(14, 10, 10, 3, "Call", currentBet > 0 and colors.green or colors.gray)
-            drawButton(2, 14, 10, 3, "Raise", colors.green)
-            drawButton(14, 14, 10, 3, "Fold", colors.red)
-            drawButton(2, 18, 10, 3, "All-in", colors.orange)
-        end
-
-        local event, param1, param2, param3 = os.pullEvent()
-        if event == "rednet_message" then
-            local senderID, msg = param1, param2
-            if msg and type(msg) == "table" and senderID == serverID then
-                print("Received: " .. (msg.type or "nil"))
-                if msg.type == "hand" then
-                    hand = msg.cards or {}
-                    writeOutput(1, 4, "Hand: " .. (hand[1] and (hand[1].rank .. hand[1].suit) or "") .. " " .. (hand[2] and (hand[2].rank .. hand[2].suit) or ""))
-                elseif msg.type == "state" then
-                    communityCards = msg.communityCards or {}
-                    pots = msg.pots or {}
-                    currentBet = msg.currentBet or 0
-                    currentPlayer = msg.currentPlayer or 0
-                    blinds = msg.blinds or {}
-                    round = msg.round or ""
-                    showdown = msg.showdown or false
-                elseif msg.type == "showdown" then
-                    showdown = true
-                elseif msg.type == "eliminated" then
-                    state = "eliminated"
-                    writeOutput(1, 3, "Eliminated! Reinsert disk to rejoin.")
-                elseif msg.type == "read_balance" then
-                    local bal, err = readBalance()
-                    print("Sending read_balance_response: balance=" .. (bal or "nil") .. ", error=" .. (err or "nil"))
-                    rednet.send(serverID, {type = "read_balance_response", balance = bal, error = err})
-                elseif msg.type == "write_balance" then
-                    local success = writeBalance(msg.data.balance)
-                    print("Sending write_balance_response: success=" .. tostring(success))
-                    rednet.send(serverID, {type = "write_balance_response", success = success})
-                elseif msg.type == "read_username" then
-                    local uname = readUsername()
-                    print("Sending read_username_response: name=" .. uname)
-                    rednet.send(serverID, {type = "read_username_response", name = uname})
-                end
-            else
-                print("Invalid message from " .. (senderID or "unknown"))
-            end
-        elseif event == "monitor_touch" and state == "game" then
-            local x, y = param2, param3
-            if showdown then
-                if isClickInButton(x, y, 2, 10, 10, 3) then
-                    rednet.send(serverID, {type = "showdown_choice", choice = "muck"})
-                elseif isClickInButton(x, y, 14, 10, 10, 3) then
-                    rednet.send(serverID, {type = "showdown_choice", choice = "show"})
-                end
-            elseif currentPlayer == os.getComputerID() then
-                if isClickInButton(x, y, 2, 10, 10, 3) and currentBet == 0 then
-                    rednet.send(serverID, {type = "action", action = "check"})
-                elseif isClickInButton(x, y, 14, 10, 10, 3) and currentBet > 0 then
-                    rednet.send(serverID, {type = "action", action = "call"})
-                elseif isClickInButton(x, y, 2, 14, 10, 3) then
-                    writeOutput(1, 10, "Enter raise amount: ")
-                    local amount = tonumber(read())
-                    if amount and amount > currentBet then
-                        rednet.send(serverID, {type = "action", action = "raise", amount = amount})
-                    end
-                elseif isClickInButton(x, y, 14, 14, 10, 3) then
-                    rednet.send(serverID, {type = "action", action = "fold"})
-                elseif isClickInButton(x, y, 2, 18, 10, 3) then
-                    rednet.send(serverID, {type = "action", action = "allin"})
-                end
-            end
-        end
+        sleep(0.1)
     end
-    sleep(0.1)
 end
+
+-- Handle monitor updates and touches
+local function handleMonitor()
+    while true do
+        clearOutput(colors.black)
+        writeOutput(1, 1, "Texas Hold'em")
+
+        if state == "searching" then
+            writeOutput(1, 3, "Searching for server...")
+            if not drive.isDiskPresent() then
+                writeOutput(1, 5, "Insert a disk")
+            else
+                local balance, err = readBalance()
+                if balance and balance >= 100 then
+                    if joinServer() then
+                        name = readUsername()
+                        chips = 1000
+                        local balance = readBalance() or 0
+                        writeBalance(balance - 100)  -- Buy-in
+                        state = "game"
+                        print("Joined as " .. name)
+                    end
+                else
+                    writeOutput(1, 5, "Insufficient chips: " .. (balance or 0) .. "/100")
+                end
+            end
+        elseif state == "game" then
+            writeOutput(1, 3, "Player: " .. name .. " | Chips: " .. chips)
+            local handStr = "Hand: " .. (hand[1] and (hand[1].rank .. hand[1].suit) or "") .. " " .. (hand[2] and (hand[2].rank .. hand[2].suit) or "")
+            writeOutput(1, 4, handStr)
+            local commStr = "Community: "
+            for _, card in ipairs(communityCards) do commStr = commStr .. (card.rank or "?") .. (card.suit or "?") .. " " end
+            writeOutput(1, 6, commStr)
+            local potStr = "Pots: "
+            for i, pot in ipairs(pots) do potStr = potStr .. (i > 1 and "Side " or "Main ") .. pot.amount .. " " end
+            writeOutput(1, 7, potStr)
+            writeOutput(1, 8, "Current Bet: " .. currentBet)
+            if showdown then
+                drawButton(2, 10, 10, 3, "Muck", colors.red)
+                drawButton(14, 10, 10, 3, "Show", colors.green)
+            elseif currentPlayer == os.getComputerID() then
+                drawButton(2, 10, 10, 3, "Check", currentBet == 0 and colors.green or colors.gray)
+                drawButton(14, 10, 10, 3, "Call", currentBet > 0 and colors.green or colors.gray)
+                drawButton(2, 14, 10, 3, "Raise", colors.green)
+                drawButton(14, 14, 10, 3, "Fold", colors.red)
+                drawButton(2, 18, 10, 3, "All-in", colors.orange)
+            end
+
+            local event, param1, param2, param3 = os.pullEvent()
+            if event == "monitor_touch" and state == "game" then
+                local x, y = param2, param3
+                if showdown then
+                    if isClickInButton(x, y, 2, 10, 10, 3) then
+                        rednet.send(serverID, {type = "showdown_choice", choice = "muck"})
+                    elseif isClickInButton(x, y, 14, 10, 10, 3) then
+                        rednet.send(serverID, {type = "showdown_choice", choice = "show"})
+                    end
+                elseif currentPlayer == os.getComputerID() then
+                    if isClickInButton(x, y, 2, 10, 10, 3) and currentBet == 0 then
+                        rednet.send(serverID, {type = "action", action = "check"})
+                    elseif isClickInButton(x, y, 14, 10, 10, 3) and currentBet > 0 then
+                        rednet.send(serverID, {type = "action", action = "call"})
+                    elseif isClickInButton(x, y, 2, 14, 10, 3) then
+                        writeOutput(1, 10, "Enter raise amount: ")
+                        local amount = tonumber(read())
+                        if amount and amount > currentBet then
+                            rednet.send(serverID, {type = "action", action = "raise", amount = amount})
+                        end
+                    elseif isClickInButton(x, y, 14, 14, 10, 3) then
+                        rednet.send(serverID, {type = "action", action = "fold"})
+                    elseif isClickInButton(x, y, 2, 18, 10, 3) then
+                        rednet.send(serverID, {type = "action", action = "allin"})
+                    end
+                end
+            end
+        elseif state == "eliminated" then
+            writeOutput(1, 3, "Eliminated! Reinsert disk to rejoin.")
+        end
+        sleep(0.1)
+    end
+end
+
+-- Main loop
+parallel.waitForAny(handleRednet, handleMonitor)
