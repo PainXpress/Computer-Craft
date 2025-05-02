@@ -1,6 +1,4 @@
 -- Poker (Texas Hold'em) for Casino Debit Cards
--- Save as 'poker.lua' on main computer
-
 local monitor = peripheral.find("monitor")
 local modem = peripheral.find("modem") or error("No modem found")
 print("Opening modem: " .. peripheral.getName(modem))
@@ -10,7 +8,7 @@ local state = "lobby"
 local players = {} -- {id, name, chips, diskID, hand, active, betThisRound, showCards}
 local deck = {}
 local communityCards = {}
-local pots = {{amount = 0, eligible = {}}} -- Main pot and side pots
+local pots = {{amount = 0, eligible = {}}}
 local currentBet = 0
 local blinds = {small = 10, big = 20}
 local dealerPos = 1
@@ -22,18 +20,26 @@ local startingChips = 1000
 local suits = {"H", "D", "C", "S"}
 local ranks = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
 local showdown = false
-local showdownResponses = {} -- {playerID, choice: "muck" or "show"}
+local showdownResponses = {}
 
 -- Helper: Retry rednet requests with timeout
 local function retryRequest(playerID, requestType, data, retries, timeout)
     for i = 1, retries do
         print("Attempt " .. i .. " - " .. requestType .. " to ID " .. playerID)
         rednet.send(playerID, {type = requestType, data = data})
-        local senderID, msg = rednet.receive(timeout)
-        if senderID == playerID and msg and msg.type == requestType .. "_response" then
-            return msg
+        local timerID = os.startTimer(timeout)
+        while true do
+            local event, param1, param2 = os.pullEvent()
+            if event == "rednet_message" then
+                local senderID, msg = param1, param2
+                if senderID == playerID and msg and msg.type == requestType .. "_response" then
+                    print("Success: " .. requestType .. " response from ID " .. playerID)
+                    return msg
+                end
+            elseif event == "timer" and param1 == timerID then
+                break
+            end
         end
-        sleep(1) -- Brief delay between retries
     end
     print(requestType .. " failed: No response from ID " .. playerID)
     return nil
@@ -43,6 +49,7 @@ end
 function readBalance(playerID, diskID)
     local response = retryRequest(playerID, "read_balance", {diskID = diskID}, 3, 5)
     if response then
+        print("Balance received: " .. (response.balance or "nil"))
         return response.balance, response.error
     end
     return nil, "No response"
@@ -130,12 +137,8 @@ end
 -- Evaluate hand
 function evaluateHand(player)
     local cards = {}
-    for _, card in ipairs(player.hand) do
-        table.insert(cards, card)
-    end
-    for _, card in ipairs(communityCards) do
-        table.insert(cards, card)
-    end
+    for _, card in ipairs(player.hand) do table.insert(cards, card) end
+    for _, card in ipairs(communityCards) do table.insert(cards, card) end
     local function cardValue(card)
         return card.rank == "A" and 14 or card.rank == "K" and 13 or card.rank == "Q" and 12 or card.rank == "J" and 11 or tonumber(card.rank) or 0
     end
@@ -237,9 +240,11 @@ function main()
             local playerStr = ""
             for i, player in ipairs(players) do playerStr = playerStr .. player.name .. ": " .. player.chips .. " chips\n" end
             writeOutput(2, 6, playerStr)
-            local commStr = "Community: " .. table.concat(communityCards, function(c) return c.rank .. c.suit .. " " end)
+            local commStr = "Community: "
+            for _, card in ipairs(communityCards) do commStr = commStr .. (card.rank or "?") .. (card.suit or "?") .. " " end
             writeOutput(2, 10, commStr)
-            local potStr = "Pots: " .. table.concat(pots, function(p, i) return (i > 1 and "Side " or "Main ") .. p.amount .. " " end)
+            local potStr = "Pots: "
+            for i, pot in ipairs(pots) do potStr = potStr .. (i > 1 and "Side " or "Main ") .. pot.amount .. " " end
             writeOutput(2, 11, potStr)
             writeOutput(2, 12, "Bet: " .. currentBet)
             if showdown then
@@ -268,6 +273,7 @@ function main()
                     print("Processing join for ID " .. senderID .. ", diskID " .. (msg.diskID or "nil"))
                     if not msg.diskID then
                         rednet.send(senderID, {type = "error", message = "No diskID"})
+                        print("Join failed: No diskID provided")
                     else
                         local balance, err = readBalance(senderID, msg.diskID)
                         if balance and balance >= buyIn then
@@ -276,12 +282,15 @@ function main()
                                 table.insert(players, {id = senderID, name = readUsername(senderID, msg.diskID), chips = startingChips, diskID = msg.diskID, hand = {}, active = true, betThisRound = 0, showCards = false})
                                 rednet.send(senderID, {type = "joined", name = players[#players].name})
                                 message = "Player " .. players[#players].name .. " joined!"
+                                print("Join successful for " .. players[#players].name)
                                 playSound("block.note_block.hat")
                             else
                                 rednet.send(senderID, {type = "error", message = "Write failed"})
+                                print("Join failed: Write failed")
                             end
                         else
                             rednet.send(senderID, {type = "error", message = err or "Insufficient funds"})
+                            print("Join failed: " .. (err or "Insufficient funds"))
                         end
                     end
                 elseif msg.type == "action" and state == "game" and senderID == players[currentPlayer].id and not showdown then
@@ -396,7 +405,7 @@ function main()
                     end
                     local activePlayers = 0
                     for _, p in ipairs(players) do if p.active then activePlayers = activePlayers + 1 end end
-                    if #showdownResponses == activePlayers then
+                    if table.getn(showdownResponses) == activePlayers then
                         local handResults = {}
                         for _, p in ipairs(players) do if p.active then table.insert(handResults, {player = p, hand = evaluateHand(p)}) end end
                         table.sort(handResults, function(a, b) return compareHands(a.hand, b.hand) > 0 end)
