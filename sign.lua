@@ -20,7 +20,7 @@ local font = {
     ["R"] = {"#### ","#   #","#### ","#  # ","#   #"},
     ["S"] = {" ####","#    "," ### ","    #","#### "},
     ["W"] = {"#   #","#   #","# # #","## ##","#   #"},
-    [" "] = {"     ","     ","     ","     ","     "}
+    [" "] = {"     ","     ","     ","     "}
 }
 
 -- Draw a letter at (x,y) scaled
@@ -36,7 +36,7 @@ local function drawLetter(char, x, y, scale, color)
                         if px>=1 and px<=monW and py>=1 and py<=monH then
                             mon.setCursorPos(px,py)
                             mon.setTextColor(color)
-                            mon.write("█")
+                            mon.write("#")
                         end
                     end
                 end
@@ -51,17 +51,17 @@ local borderColorIndex = 1
 local function drawBorder()
     mon.setTextColor(borderColors[borderColorIndex])
     for x=1,monW do
-        mon.setCursorPos(x,1)   mon.write("═")
-        mon.setCursorPos(x,monH) mon.write("═")
+        mon.setCursorPos(x,1)   mon.write("-")
+        mon.setCursorPos(x,monH) mon.write("-")
     end
     for y=1,monH do
-        mon.setCursorPos(1,y)   mon.write("║")
-        mon.setCursorPos(monW,y) mon.write("║")
+        mon.setCursorPos(1,y)   mon.write("|")
+        mon.setCursorPos(monW,y) mon.write("|")
     end
-    mon.setCursorPos(1,1)       mon.write("╔")
-    mon.setCursorPos(monW,1)    mon.write("╗")
-    mon.setCursorPos(1,monH)     mon.write("╚")
-    mon.setCursorPos(monW,monH)  mon.write("╝")
+    mon.setCursorPos(1,1)       mon.write("+")
+    mon.setCursorPos(monW,1)    mon.write("+")
+    mon.setCursorPos(1,monH)     mon.write("+")
+    mon.setCursorPos(monW,monH)  mon.write("+")
 end
 
 -- Scroll text: in from right -> center -> pause -> out to left
