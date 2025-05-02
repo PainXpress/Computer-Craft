@@ -45,11 +45,12 @@ local function drawLetter(char, x, y, scale, color)
     end
 end
 
--- Draw border with flashing colors
+-- Draw thicker border with flashing colors
 local borderColors = {colors.cyan, colors.pink, colors.yellow}
 local borderColorIndex = 1
 local function drawBorder()
     mon.setTextColor(borderColors[borderColorIndex])
+    -- Outer layer (original)
     for x=1,monW do
         mon.setCursorPos(x,1)   mon.write("-")
         mon.setCursorPos(x,monH) mon.write("-")
@@ -57,11 +58,27 @@ local function drawBorder()
     for y=1,monH do
         mon.setCursorPos(1,y)   mon.write("|")
         mon.setCursorPos(monW,y) mon.write("|")
-    end
+    }
     mon.setCursorPos(1,1)       mon.write("+")
     mon.setCursorPos(monW,1)    mon.write("+")
     mon.setCursorPos(1,monH)     mon.write("+")
     mon.setCursorPos(monW,monH)  mon.write("+")
+    
+    -- Inner layer (new)
+    if monW > 2 and monH > 2 then -- Ensure monitor is large enough
+        for x=2,monW-1 do
+            mon.setCursorPos(x,2)       mon.write("-")
+            mon.setCursorPos(x,monH-1)  mon.write("-")
+        end
+        for y=2,monH-1 do
+            mon.setCursorPos(2,y)       mon.write("|")
+            mon.setCursorPos(monW-1,y)  mon.write("|")
+        end
+        mon.setCursorPos(2,2)           mon.write("+")
+        mon.setCursorPos(monW-1,2)      mon.write("+")
+        mon.setCursorPos(2,monH-1)      mon.write("+")
+        mon.setCursorPos(monW-1,monH-1) mon.write("+")
+    end
 end
 
 -- Scroll text: in from right -> center -> pause -> out to left
