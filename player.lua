@@ -16,6 +16,7 @@ local currentPlayer
 local blinds = {}
 local round = ""
 local showdown = false
+local joining = false -- Flag to prevent other messages during join
 
 -- Disk functions
 function readBalance()
@@ -138,20 +139,32 @@ local function joinServer()
         print("joinServer: No diskID")
         return false
     end
+    joining = true -- Set flag to prevent other messages
     for i = 1, 3 do
         print("Attempt " .. i .. " to join server " .. serverID)
         rednet.send(serverID, {type = "join", diskID = diskID})
-        local id, msg = rednet.receive(5)
-        if id == serverID and msg and msg.type == "joined" then
-            print("joinServer: Success, joined as " .. (msg.name or "Unknown"))
-            return true
-        elseif id == serverID and msg and msg.type == "error" then
-            print("joinServer: Error - " .. (msg.message or "Unknown error"))
-            writeOutput(1, 5, "Error: " .. (msg.message or "Unknown"))
-            return false
+        local timerID = os.startTimer(5)
+        while true do
+            local event, param1, param2 = os.pullEvent()
+            if event == "rednet_message" then
+                local id, msg = param1, param2
+                if id == serverID and msg and msg.type == "joined" then
+                    print("joinServer: Success, joined as " .. (msg.name or "Unknown"))
+                    joining = false
+                    return true
+                elseif id == serverID and msg and msg.type == "error" then
+                    print("joinServer: Error - " .. (msg.message or "Unknown error"))
+                    writeOutput(1, 5, "Error: " .. (msg.message or "Unknown"))
+                    joining = false
+                    return false
+                end
+            elseif event == "timer" and param1 == timerID then
+                break
+            end
         end
     end
     print("joinServer: Failed after 3 attempts")
+    joining = false
     return false
 end
 
@@ -161,7 +174,10 @@ local function handleRednet()
         local senderID, msg = rednet.receive()
         if msg and type(msg) == "table" and senderID == serverID then
             print("Received: " .. (msg.type or "nil"))
-            if msg.type == "hand" then
+            if joining and not (msg.type == "joined" or msg.type == "error") then
+                -- Ignore non-join messages during join process
+                print("Ignoring message during join: " .. msg.type)
+            elseif msg.type == "hand" then
                 hand = msg.cards or {}
             elseif msg.type == "state" then
                 communityCards = msg.communityCards or {}
