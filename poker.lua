@@ -1,537 +1,976 @@
--- Poker (Texas Hold'em) for Casino Debit Cards
-local monitor = peripheral.find("monitor")
-local modem = peripheral.find("modem") or error("No modem found")
-print("Opening modem: " .. peripheral.getName(modem))
-rednet.open("left")  -- Modem on left side
+-- Poker Host Server Code (poker.lua) - Rewritten
+--[[
+    ComputerCraft Poker Game - Host Server
+    Handles game logic, player management, and communication.
+    Rewritten to include basic turn management, action handling, and game flow.
+]]
 
-local state = "lobby"
-local players = {} -- {id, name, chips, diskID, hand, active, betThisRound, showCards}
+-- Configuration
+local gameSettings = {
+    minPlayers = 2,
+    maxPlayers = 8,
+    startingChips = 1000,
+    smallBlind = 10,
+    bigBlind = 20,
+    debug = true -- Enable/disable debug messages
+}
+
+-- Global Game State Variables
+local players = {} -- Table to store player info {id, name, chips, hand, currentBetInRound, totalBetInHand, status, isReady}
+                  -- Status: connected, ready, playing, folded, allin, sitting_out
 local deck = {}
 local communityCards = {}
-local pots = {{amount = 0, eligible = {}}}
-local currentBet = 0
-local blinds = {small = 10, big = 20}
-local dealerPos = 1
-local currentPlayer = 1
-local round = "preflop"
-local message = ""
-local buyIn = 100
-local startingChips = 1000
-local suits = {"H", "D", "C", "S"}
-local ranks = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
-local showdown = false
-local showdownResponses = {}
+local pot = 0
+local currentHighestBet = 0 -- Highest total bet placed *in the current betting round*
+local minRaiseAmount = 0 -- Minimum amount needed to raise
+local gameState = "lobby" -- lobby, dealing, preflop, flop, turn, river, showdown, hand_over
+local dealerPosition = 0 -- Index in the players table
+local actionPlayerIndex = 0 -- Index of the player whose turn it is
+local lastRaiserIndex = 0 -- Index of the last player who bet or raised in the current round
+local hostID = os.computerID()
+local protocol = "poker_game" -- Rednet protocol identifier
 
--- Helper: Retry rednet requests with timeout
-local function retryRequest(playerID, requestType, data, retries, timeout)
-    for i = 1, retries do
-        print("Attempt " .. i .. " - Sending " .. requestType .. " to ID " .. playerID)
-        rednet.send(playerID, {type = requestType, data = data})
-        local timerID = os.startTimer(timeout)
-        while true do
-            local event, param1, param2 = os.pullEvent()
-            if event == "rednet_message" then
-                local senderID, msg = param1, param2
-                if senderID == playerID and msg and msg.type == requestType .. "_response" then
-                    print("Received " .. requestType .. "_response from ID " .. playerID)
-                    return msg
+-- Monitor Setup
+local monitor = peripheral.find("monitor")
+local function setupMonitor()
+    if monitor then
+        monitor.setTextScale(0.5)
+        monitor.setCursorPos(1, 1)
+        monitor.clear()
+    end
+end
+
+-- Utility Functions
+local function log(message)
+    if gameSettings.debug then
+        print("[DEBUG] " .. tostring(message))
+    end
+    if monitor then
+        pcall(function() -- Wrap monitor operations in pcall for safety
+            local w, h = monitor.getSize()
+            local x, y = monitor.getCursorPos()
+            monitor.setCursorPos(1, h) -- Log debug to the bottom line
+            monitor.clearLine()
+            monitor.write("[DBG] " .. string.sub(tostring(message), 1, w - 6)) -- Truncate if too long
+            monitor.setCursorPos(x, y) -- Restore cursor
+        end)
+    end
+end
+
+local function deepCopy(orig)
+    local orig_type = type(orig)
+    local copy
+    if orig_type == 'table' then
+        copy = {}
+        for orig_key, orig_value in next, orig, nil do
+            copy[deepCopy(orig_key)] = deepCopy(orig_value)
+        end
+        setmetatable(copy, deepCopy(getmetatable(orig)))
+    else -- number, string, boolean, etc
+        copy = orig
+    end
+    return copy
+end
+
+-- Creates a safe version of the players table to send (removes hands)
+local function getPublicPlayersTable()
+     local publicPlayers = deepCopy(players)
+     for _, p in ipairs(publicPlayers) do
+         p.hand = nil -- Don't broadcast hands
+     end
+     return publicPlayers
+end
+
+
+local function updateMonitor()
+    if not monitor then return end
+    pcall(function()
+        monitor.clear()
+        monitor.setCursorPos(1, 1)
+        monitor.write("--- Poker Server --- ID: " .. hostID .. " ---")
+        monitor.setCursorPos(1, 2)
+        monitor.write("Status: " .. gameState .. " | Pot: " .. pot .. " | High Bet: " .. currentHighestBet)
+        monitor.setCursorPos(1, 3)
+        monitor.write("Players (" .. #players .. "/" .. gameSettings.maxPlayers .. "):")
+
+        local line = 4
+        local w, h = monitor.getSize()
+        for i, player in ipairs(players) do
+            if line <= h -1 then -- Leave last line for debug
+                monitor.setCursorPos(2, line)
+                local statusText = player.status or "N/A"
+                local turnIndicator = (i == actionPlayerIndex and gameState ~= "lobby" and gameState ~= "hand_over") and " (*)" or ""
+                local dealerIndicator = (i == dealerPosition and gameState ~= "lobby") and " (D)" or ""
+                local handStr = ""
+                if gameState ~= "lobby" and player.hand and #player.hand > 0 then
+                   -- Only show host the hands for debugging maybe? Or don't show at all.
+                   -- handStr = " [" .. table.concat(player.hand, " ") .. "]" -- DEBUG ONLY
                 end
-            elseif event == "timer" and param1 == timerID then
-                break
+                local betStr = (player.currentBetInRound > 0) and (" Bet:" .. player.currentBetInRound) or ""
+                local readyStr = (player.isReady and gameState == "lobby") and " [R]" or ""
+
+                local playerLine = string.format("%d. %s (ID:%d) C:%d S:%s%s%s%s%s",
+                                     i, player.name or "??", player.id, player.chips, statusText,
+                                     betStr, turnIndicator, dealerIndicator, readyStr --, handStr -- Add handStr back for debug
+                                     )
+                monitor.write(string.sub(playerLine, 1, w-2)) -- Truncate if needed
+                line = line + 1
             end
         end
-    end
-    print(requestType .. " failed: No response from ID " .. playerID)
-    return nil
-end
 
--- Read balance with retries
-function readBalance(playerID, diskID)
-    local response = retryRequest(playerID, "read_balance", {diskID = diskID}, 3, 5)
-    if response then
-        return response.balance, response.error
-    end
-    return nil, "No response"
-end
-
--- Write balance
-function writeBalance(playerID, diskID, balance)
-    local response = retryRequest(playerID, "write_balance", {diskID = diskID, balance = balance}, 3, 5)
-    return response and response.success or false
-end
-
--- Read username
-function readUsername(playerID, diskID)
-    local response = retryRequest(playerID, "read_username", {diskID = diskID}, 3, 5)
-    return response and response.name or "Unknown"
-end
-
--- Write output to monitor
-function writeOutput(x, y, text)
-    if monitor then
-        monitor.setCursorPos(x, y)
-        monitor.write(text)
-    end
-end
-
--- Clear output with color
-function clearOutput(color)
-    if monitor then
-        monitor.clear()
-        monitor.setTextScale(0.5)
-        monitor.setBackgroundColor(color)
-        monitor.setTextColor(colors.white)
-    end
-end
-
--- Draw button
-function drawButton(x, y, width, height, text, color)
-    if monitor then
-        monitor.setBackgroundColor(color)
-        for i = 0, height - 1 do
-            monitor.setCursorPos(x, y + i)
-            monitor.write(string.rep(" ", width))
+        if #communityCards > 0 then
+             if line <= h - 1 then
+                monitor.setCursorPos(1, line)
+                monitor.write("Board: " .. table.concat(communityCards, " "))
+                line = line + 1
+            end
         end
-        monitor.setCursorPos(x + math.floor((width - #text) / 2), y + math.floor(height / 2))
-        monitor.setTextColor(colors.white)
-        monitor.write(text)
-    end
-end
-
--- Play sound
-function playSound(sound)
-    local success, result = pcall(function()
-        commands.exec("playsound " .. sound .. " block @a ~ ~ ~ 1 1")
     end)
 end
 
--- Initialize deck
-function initDeck()
+local function broadcast(message, excludeID)
+    log("Broadcasting: " .. textutils.serialize(message))
+    for _, player in ipairs(players) do
+        if player.id ~= excludeID then
+            rednet.send(player.id, message, protocol)
+        end
+    end
+    -- Also update host monitor after broadcast potentially
+    updateMonitor()
+end
+
+local function sendToPlayer(playerID, message)
+    log("Sending to " .. playerID .. ": " .. textutils.serialize(message))
+    rednet.send(playerID, message, protocol)
+end
+
+-- Deck Functions
+local function createDeck()
     deck = {}
+    local suits = {"H", "D", "C", "S"} -- Hearts, Diamonds, Clubs, Spades
+    local ranks = {"2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"}
     for _, suit in ipairs(suits) do
         for _, rank in ipairs(ranks) do
-            table.insert(deck, {rank = rank, suit = suit})
+            table.insert(deck, rank .. suit)
         end
     end
 end
 
--- Shuffle deck
-function shuffleDeck()
+local function shuffleDeck()
     for i = #deck, 2, -1 do
-        local j = math.random(1, i)
+        local j = math.random(i)
         deck[i], deck[j] = deck[j], deck[i]
     end
+    log("Deck shuffled.")
 end
 
--- Deal cards
-function dealCards()
+local function dealCard()
+    if #deck == 0 then
+        log("Error: Deck is empty!")
+        -- Reshuffle or handle error? For now, return nil.
+        return nil
+    end
+    return table.remove(deck)
+end
+
+-- Player Management
+local function addPlayer(id, name)
+    if gameState ~= "lobby" then
+        sendToPlayer(id, { type = "error", message = "Game in progress. Please wait." })
+        return false
+    end
+    if #players >= gameSettings.maxPlayers then
+        sendToPlayer(id, { type = "error", message = "Game is full." })
+        return false
+    end
+    -- Check if player ID already exists
+    for _, p in ipairs(players) do
+        if p.id == id then
+            sendToPlayer(id, { type = "error", message = "You are already in the game." })
+            -- Maybe just resend confirmation? For now, reject.
+            return false
+        end
+    end
+
+    local newPlayer = {
+        id = id,
+        name = name or "Player" .. id,
+        chips = gameSettings.startingChips,
+        hand = {},
+        currentBetInRound = 0, -- Bet amount in the current street (preflop, flop, etc.)
+        totalBetInHand = 0, -- Total bet amount in the entire hand
+        status = "connected", -- connected, ready, playing, folded, allin, sitting_out
+        isReady = false
+    }
+    table.insert(players, newPlayer)
+    log("Player " .. newPlayer.name .. " (ID: " .. id .. ") joined.")
+
+    -- Send confirmation and current game state
+    sendToPlayer(id, { type = "join_confirm", hostID = hostID, settings = gameSettings, players = getPublicPlayersTable(), gameState = gameState })
+    -- Notify other players
+    broadcast({ type = "player_joined", player = {id=newPlayer.id, name=newPlayer.name, chips=newPlayer.chips, status=newPlayer.status, isReady=newPlayer.isReady} }, id) -- Send limited info
+    updateMonitor()
+    return true
+end
+
+local function removePlayer(id)
+    local removedPlayer = nil
+    local removedIndex = -1
+    for i = #players, 1, -1 do
+        if players[i].id == id then
+            removedPlayer = table.remove(players, i)
+            removedIndex = i
+            log("Player " .. (removedPlayer.name or "Unknown") .. " (ID: " .. id .. ") left or disconnected.")
+            broadcast({ type = "player_left", playerID = id })
+            break
+        end
+    end
+
+    if removedPlayer then
+        -- Handle game state if player leaves mid-game
+        if gameState ~= "lobby" and gameState ~= "hand_over" then
+             log("Player left mid-game. Folding their hand.")
+             -- If it was their turn, advance turn
+             if removedIndex == actionPlayerIndex then
+                 -- Need to be careful if removing the player shifts indices
+                 -- It's generally safer to handle turn advancement *after* removal
+                 -- Mark them as folded conceptually, let advanceTurn handle finding the *next* player
+                 removedPlayer.status = "folded" -- Mark status for potential side pot calculations etc.
+                 -- Potentially refund bets if round hasn't completed? Complex. Simplest is to forfeit bets.
+                 advanceTurn()
+             else
+                 -- If the removed player was before the current action player, adjust actionPlayerIndex
+                 if removedIndex < actionPlayerIndex then
+                     actionPlayerIndex = actionPlayerIndex - 1
+                 end
+                 -- Adjust dealer position if needed
+                 if removedIndex < dealerPosition then
+                     dealerPosition = dealerPosition - 1
+                 elseif removedIndex == dealerPosition then
+                      -- If the dealer leaves, the button moves conceptually, but we'll recalculate next hand anyway
+                      dealerPosition = (dealerPosition - 2 + #players) % #players + 1 -- Move back one relative to new table size
+                 end
+                 -- Adjust last raiser index
+                 if removedIndex < lastRaiserIndex then
+                      lastRaiserIndex = lastRaiserIndex - 1
+                 elseif removedIndex == lastRaiserIndex then
+                     -- Find the player before the removed player who last bet/raised or default to BB? Complex.
+                     -- Simplest: Let the betting round continue, it will resolve naturally.
+                 end
+             end
+        end
+        updateMonitor()
+    end
+    return removedPlayer
+end
+
+-- Game Flow and Turn Management
+local function getActivePlayersCount(includeAllIn)
+    local count = 0
     for _, player in ipairs(players) do
-        if player.active then
-            player.hand = {table.remove(deck), table.remove(deck)}
-            rednet.send(player.id, {type = "hand", cards = player.hand})
+        if player.status == "playing" or (includeAllIn and player.status == "allin") then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function findNextPlayerIndex(startIndex, direction)
+    direction = direction or 1 -- Default to clockwise
+    local numPlayers = #players
+    if numPlayers == 0 then return 0 end
+
+    local currentIndex = startIndex
+    repeat
+        currentIndex = (currentIndex + direction - 1 + numPlayers) % numPlayers + 1
+        local player = players[currentIndex]
+        -- Eligible players are 'playing' and have chips left (or are 'allin' but haven't acted yet this round?)
+        -- For now, only 'playing' status can act. 'allin' players are skipped.
+        if player and player.status == "playing" then
+            return currentIndex
+        end
+    until currentIndex == startIndex -- Full circle
+
+    -- If no 'playing' players found (e.g., everyone else folded or is all-in)
+    log("Could not find next active player from index " .. startIndex)
+    return 0 -- Indicate no one else can act
+end
+
+local function advanceTurn()
+    local numActivePlayers = getActivePlayersCount(false) -- Count players still able to bet/raise/fold
+    local numTotalActive = getActivePlayersCount(true) -- Count players still in the hand (including all-in)
+
+    log("Advancing turn. Active(betting): "..numActivePlayers..", Active(total): "..numTotalActive..", Current Action Player: "..actionPlayerIndex..", Last Raiser: "..lastRaiserIndex)
+
+    if numActivePlayers <= 1 and currentHighestBet == 0 then
+        -- If only one player can bet, and no bet has been made (e.g. pre-flop BB option), they get one more action.
+        -- Or if betting round is complete. Check if action is back to last raiser.
+    end
+
+     -- Check if betting round is over
+     -- Condition: Action returns to the last player who bet/raised *without* another raise occurring,
+     -- OR only one player remains who hasn't folded.
+     local nextPlayerIndex = findNextPlayerIndex(actionPlayerIndex)
+
+     if numActivePlayers <= 1 then
+          log("Betting round ends: Only one active player left.")
+          endBettingRound()
+          return
+     end
+
+     -- Check if the action has completed a full circle back to the last aggressor
+     -- The player at 'nextPlayerIndex' is the one *potentially* closing the action.
+     -- If the next player to act *is* the last raiser, the round ends, unless it's the BB pre-flop who hasn't acted yet.
+     -- Exception: Big Blind pre-flop gets the option to raise even if others just called.
+     local isPreflop = (gameState == "preflop")
+     local isBigBlind = (actionPlayerIndex == ((dealerPosition + (isPreflop and 1 or 0)) % #players) + 1) -- Approximate BB position check
+     local bigBlindCanCheckOrRaise = isPreflop and isBigBlind and currentHighestBet == gameSettings.bigBlind and actionPlayerIndex == lastRaiserIndex
+
+     if nextPlayerIndex == lastRaiserIndex and not bigBlindCanCheckOrRaise then
+         log("Betting round ends: Action returns to last raiser ("..lastRaiserIndex..").")
+         endBettingRound()
+         return
+     end
+
+     -- Otherwise, move to the next player
+     actionPlayerIndex = nextPlayerIndex
+     if actionPlayerIndex == 0 then
+         -- This shouldn't happen if numActivePlayers > 1, but as a fallback:
+         log("Error: Could not find next player, ending round.")
+         endBettingRound()
+     else
+         log("Next action to player index: " .. actionPlayerIndex)
+         requestAction(actionPlayerIndex)
+     end
+end
+
+
+local function requestAction(playerIndex)
+    local player = players[playerIndex]
+    if not player or player.status ~= "playing" then
+        log("Cannot request action from player " .. playerIndex .. " (status: " .. (player and player.status or "nil") .. "). Skipping.")
+        advanceTurn() -- Skip to next player
+        return
+    end
+
+    local callAmount = currentHighestBet - player.currentBetInRound
+    local canCheck = (callAmount <= 0) -- Can check if no bet pending or already matched highest bet
+
+    -- Calculate minimum raise amount
+    -- Standard poker: Min raise must be at least the size of the previous bet/raise.
+    -- minRaiseAmount was set when the last bet/raise occurred. If no raise yet, it's BB size.
+    local effectiveMinRaise = math.max(gameSettings.bigBlind, minRaiseAmount)
+    local minRaiseTotal = currentHighestBet + effectiveMinRaise -- The total bet needed for a minimum raise
+
+    log("Requesting action from " .. player.name .. " (Index: " .. playerIndex .. ")")
+    sendToPlayer(player.id, {
+        type = "request_action",
+        pot = pot,
+        communityCards = communityCards,
+        currentHighestBet = currentHighestBet,
+        yourCurrentBet = player.currentBetInRound,
+        callAmount = callAmount,
+        minRaiseTo = minRaiseTotal, -- The total bet amount required for a min raise
+        chips = player.chips,
+        canCheck = canCheck,
+        players = getPublicPlayersTable() -- Send current public state
+    })
+    updateMonitor() -- Show who's turn it is
+end
+
+local function collectBets()
+    log("Collecting bets into pot.")
+    for _, player in ipairs(players) do
+        if player.currentBetInRound > 0 then
+            pot = pot + player.currentBetInRound
+            player.totalBetInHand = player.totalBetInHand + player.currentBetInRound -- Track total investment
+            player.currentBetInRound = 0 -- Reset for next round
+        end
+    end
+    currentHighestBet = 0 -- Reset for next betting round
+    minRaiseAmount = gameSettings.bigBlind -- Reset min raise for next round
+    log("Pot is now: " .. pot)
+end
+
+local function endBettingRound()
+    log("Ending betting round for state: " .. gameState)
+    collectBets()
+
+    local activePlayersInHand = getActivePlayersCount(true) -- Include all-in players
+
+    if activePlayersInHand <= 1 then
+        log("Only one player left in hand.")
+        -- Award pot to the remaining player
+        awardPotToWinner() -- Simplified: assumes one winner
+        transitionToState("hand_over")
+        return
+    end
+
+    -- Transition to the next game state
+    if gameState == "preflop" then
+        transitionToState("flop")
+    elseif gameState == "flop" then
+        transitionToState("turn")
+    elseif gameState == "turn" then
+        transitionToState("river")
+    elseif gameState == "river" then
+        transitionToState("showdown")
+    else
+        log("Error: Unknown state to transition from: " .. gameState)
+        -- Maybe default to hand_over or showdown?
+        transitionToState("showdown")
+    end
+end
+
+local function transitionToState(newState)
+    log("Transitioning from " .. gameState .. " to " .. newState)
+    gameState = newState
+    updateMonitor() -- Update monitor immediately with new state
+
+    if newState == "flop" then
+        dealCommunityCards(3)
+        broadcast({ type = "community_cards", cards = communityCards, pot = pot })
+        -- Start betting round from player after dealer
+        actionPlayerIndex = findNextPlayerIndex(dealerPosition)
+        lastRaiserIndex = actionPlayerIndex -- Reset last raiser for the new round
+        requestAction(actionPlayerIndex)
+    elseif newState == "turn" then
+        dealCommunityCards(1)
+        broadcast({ type = "community_cards", cards = communityCards, pot = pot })
+        actionPlayerIndex = findNextPlayerIndex(dealerPosition)
+        lastRaiserIndex = actionPlayerIndex
+        requestAction(actionPlayerIndex)
+    elseif newState == "river" then
+        dealCommunityCards(1)
+        broadcast({ type = "community_cards", cards = communityCards, pot = pot })
+        actionPlayerIndex = findNextPlayerIndex(dealerPosition)
+        lastRaiserIndex = actionPlayerIndex
+        requestAction(actionPlayerIndex)
+    elseif newState == "showdown" then
+        -- Reveal hands, determine winner(s)
+        log("Entering Showdown...")
+        -- TODO: Implement hand evaluation and winner determination
+        local showdownInfo = { type = "showdown", players = {}, communityCards = communityCards, pot = pot }
+        for _, p in ipairs(players) do
+            if p.status == "playing" or p.status == "allin" then
+                table.insert(showdownInfo.players, {id = p.id, name = p.name, hand = p.hand, status = p.status})
+            end
+        end
+        broadcast(showdownInfo)
+        awardPotToWinner() -- Placeholder for winner logic
+        transitionToState("hand_over")
+    elseif newState == "hand_over" then
+        log("Hand over.")
+        broadcast({ type = "hand_over", pot = pot, players = getPublicPlayersTable() }) -- Send final player states
+        -- Wait a few seconds before starting next hand
+        sleep(5)
+        -- Check if enough players want to continue
+        local canStart = false
+        if getActivePlayersCount(true) >= gameSettings.minPlayers then -- Check if enough players have chips
+             canStart = true
+        end
+
+        if canStart then
+             startGame() -- Start the next hand
+        else
+             log("Not enough players with chips to continue. Returning to lobby.")
+             gameState = "lobby"
+             -- Reset player statuses etc for lobby
+             for _, p in ipairs(players) do
+                 p.status = "connected"
+                 p.isReady = false
+                 p.hand = {}
+                 p.currentBetInRound = 0
+                 p.totalBetInHand = 0
+             end
+             broadcast({type="state_update", gameState="lobby", players=getPublicPlayersTable()})
+             updateMonitor()
         end
     end
 end
 
--- Evaluate hand
-function evaluateHand(player)
-    local cards = {}
-    for _, card in ipairs(player.hand) do table.insert(cards, card) end
-    for _, card in ipairs(communityCards) do table.insert(cards, card) end
-    local function cardValue(card)
-        return card.rank == "A" and 14 or card.rank == "K" and 13 or card.rank == "Q" and 12 or card.rank == "J" and 11 or tonumber(card.rank) or 0
+local function dealCommunityCards(count)
+    -- Burn one card (optional, standard practice)
+    -- dealCard()
+    log("Dealing " .. count .. " community cards.")
+    for i = 1, count do
+        local card = dealCard()
+        if card then
+            table.insert(communityCards, card)
+        else
+            log("Error: Ran out of cards while dealing community cards!")
+            -- Handle error state?
+            break
+        end
     end
-    table.sort(cards, function(a, b) return cardValue(a) > cardValue(b) end)
-    local suits = {}; local ranks = {}
-    for _, card in ipairs(cards) do
-        suits[card.suit] = (suits[card.suit] or 0) + 1
-        ranks[cardValue(card)] = (ranks[cardValue(card)] or 0) + 1
-    end
-    local isFlush = false; local flushSuit
-    for suit, count in pairs(suits) do if count >= 5 then isFlush = true; flushSuit = suit end end
-    local isStraight = false; local highCard = 0
-    for i = 14, 5, -1 do if ranks[i] and ranks[i-1] and ranks[i-2] and ranks[i-3] and ranks[i-4] then isStraight = true; highCard = i break end end
-    if ranks[14] and ranks[2] and ranks[3] and ranks[4] and ranks[5] then isStraight = true; highCard = 5 end
-    if isFlush and isStraight then
-        local flushCards = {}
-        for _, card in ipairs(cards) do if card.suit == flushSuit then table.insert(flushCards, cardValue(card)) end end
-        table.sort(flushCards, function(a, b) return a > b end)
-        for i = 1, #flushCards - 4 do if flushCards[i] == flushCards[i+4] + 4 then return {rank = 9, value = flushCards[i]} end end
-    end
-    local quads, quadValue = 0, 0
-    for rank, count in pairs(ranks) do if count == 4 then quads = rank; quadValue = rank end end
-    if quads > 0 then for rank, count in pairs(ranks) do if count >= 1 and rank ~= quads then return {rank = 8, value = quadValue} end end end
-    local trips, pair = 0, 0
-    for rank, count in pairs(ranks) do if count == 3 then trips = rank elseif count == 2 then pair = rank end end
-    if trips > 0 and pair > 0 then return {rank = 7, value = trips} end
-    if isFlush then
-        local flushCards = {}
-        for _, card in ipairs(cards) do if card.suit == flushSuit then table.insert(flushCards, cardValue(card)) end end
-        table.sort(flushCards, function(a, b) return a > b end)
-        return {rank = 6, value = flushCards[1]}
-    end
-    if isStraight then return {rank = 5, value = highCard} end
-    if trips > 0 then return {rank = 4, value = trips} end
-    local pairs = {}
-    for rank, count in pairs(ranks) do if count == 2 then table.insert(pairs, rank) end end
-    if #pairs >= 2 then table.sort(pairs, function(a, b) return a > b end); return {rank = 3, value = pairs[1]} end
-    if #pairs == 1 then return {rank = 2, value = pairs[1]} end
-    local highCards = {}
-    for _, card in ipairs(cards) do table.insert(highCards, cardValue(card)) end
-    table.sort(highCards, function(a, b) return a > b end)
-    return {rank = 1, value = highCards[1]}
+    log("Community cards: " .. table.concat(communityCards, " "))
 end
 
--- Compare hands
-function compareHands(hand1, hand2)
-    if hand1.rank ~= hand2.rank then return hand1.rank > hand2.rank and 1 or -1 end
-    return hand1.value > hand2.value and 1 or hand1.value < hand2.value and -1 or 0
+-- TODO: Implement proper hand evaluation and pot awarding (complex)
+local function awardPotToWinner()
+    log("Awarding pot (placeholder logic)...")
+    -- Find first player still in the hand (playing or allin)
+    local winnerIndex = 0
+    for i, p in ipairs(players) do
+        if p.status == "playing" or p.status == "allin" then
+            winnerIndex = i
+            break
+        end
+    end
+
+    if winnerIndex > 0 then
+        local winner = players[winnerIndex]
+        log("Awarding pot of " .. pot .. " to " .. winner.name)
+        winner.chips = winner.chips + pot
+        broadcast({ type = "winner_info", winnerID = winner.id, winnerName = winner.name, amountWon = pot })
+    else
+        log("Error: No winner found?") -- Should not happen if game logic is correct
+    end
+    pot = 0 -- Reset pot after awarding
 end
 
--- Create side pots
-function createSidePots()
-    pots = {{amount = 0, eligible = {}}}
-    local bets = {}
-    for _, player in ipairs(players) do if player.active then bets[player.id] = player.betThisRound or 0 end end
-    local sortedBets = {}
-    for id, bet in pairs(bets) do table.insert(sortedBets, bet) end
-    table.sort(sortedBets)
-    for i, bet in ipairs(sortedBets) do
-        if bet > 0 then
-            local pot = {amount = 0, eligible = {}}
-            for _, player in ipairs(players) do
-                if player.active and (player.betThisRound or 0) >= bet then
-                    table.insert(pot.eligible, player.id)
-                    pot.amount = pot.amount + (i == 1 and bet or bet - sortedBets[i-1])
+
+-- Main Game Setup Function
+local function startGame()
+    local readyPlayerCount = 0
+    for _, p in ipairs(players) do if p.isReady then readyPlayerCount = readyPlayerCount + 1 end end
+
+    -- Allow starting manually via command later, for now auto-start if enough are ready
+    -- Or, just proceed if called from hand_over state
+    if gameState ~= "hand_over" and (readyPlayerCount < gameSettings.minPlayers or #players < gameSettings.minPlayers) then
+        broadcast({ type = "error", message = "Not enough ready players to start ("..readyPlayerCount.."/"..gameSettings.minPlayers..")." })
+        log("Start game failed: Not enough ready players.")
+        gameState = "lobby" -- Ensure state is lobby
+        return
+    end
+
+    log("Starting new hand...")
+    gameState = "dealing"
+    pot = 0
+    communityCards = {}
+    currentHighestBet = 0
+    minRaiseAmount = gameSettings.bigBlind -- Initial min raise size
+
+    createDeck()
+    shuffleDeck()
+
+    -- Reset player statuses and bets for the new hand
+    for _, player in ipairs(players) do
+        player.hand = {}
+        player.currentBetInRound = 0
+        player.totalBetInHand = 0
+        -- Only set status to 'playing' if they have chips
+        if player.chips > 0 then
+             player.status = "playing"
+        else
+             player.status = "sitting_out" -- Or remove them? For now, sit out.
+             log("Player "..player.name.." is sitting out (0 chips).")
+        end
+        -- isReady is reset implicitly by starting
+    end
+
+    -- Rotate dealer button
+    dealerPosition = findNextPlayerIndex(dealerPosition) -- Find next *active* player for dealer
+    if dealerPosition == 0 then dealerPosition = 1 end -- Fallback if only one player somehow
+
+    log("Dealer position set to index: " .. dealerPosition .. " (Player: " .. players[dealerPosition].name .. ")")
+
+    -- Determine blinds positions based on dealer
+    local smallBlindIndex = findNextPlayerIndex(dealerPosition)
+    local bigBlindIndex = findNextPlayerIndex(smallBlindIndex)
+
+    -- Handle heads-up case (Dealer is SB)
+    if #players == 2 then
+        smallBlindIndex = dealerPosition
+        bigBlindIndex = findNextPlayerIndex(dealerPosition)
+    end
+
+    log("Assigning blinds: SB Index " .. smallBlindIndex .. ", BB Index " .. bigBlindIndex)
+
+    -- Post blinds automatically
+    local function postBlind(playerIndex, blindAmount)
+        local player = players[playerIndex]
+        if not player then log("Error: Invalid player index for blind: "..playerIndex); return 0; end
+
+        local amountToPost = math.min(player.chips, blindAmount) -- Cannot post more than available chips
+        player.chips = player.chips - amountToPost
+        player.currentBetInRound = amountToPost
+        player.totalBetInHand = amountToPost -- Track total investment
+        pot = pot + amountToPost
+        log(player.name .. " posts blind of " .. amountToPost)
+        if amountToPost == player.chips + amountToPost then -- Check if player went all-in posting blind
+             player.status = "allin"
+             log(player.name .. " is all-in posting blind.")
+        end
+        return amountToPost -- Return actual amount posted
+    end
+
+    local sbPosted = 0
+    local bbPosted = 0
+    if smallBlindIndex ~= 0 then sbPosted = postBlind(smallBlindIndex, gameSettings.smallBlind) end
+    if bigBlindIndex ~= 0 then bbPosted = postBlind(bigBlindIndex, gameSettings.bigBlind) end
+
+    currentHighestBet = math.max(sbPosted, bbPosted) -- Highest bet is now the BB (or SB if BB couldn't afford)
+    minRaiseAmount = gameSettings.bigBlind -- Initial min raise is BB amount
+
+    -- Deal hands (2 cards each)
+    log("Dealing hands...")
+    for i = 1, 2 do
+        local currentDealIndex = dealerPosition -- Start dealing left of dealer
+        for _ = 1, #players do
+            currentDealIndex = findNextPlayerIndex(currentDealIndex)
+            local player = players[currentDealIndex]
+            if player and (player.status == "playing" or player.status == "allin") then -- Deal to active/all-in players
+                local card = dealCard()
+                if card then
+                    table.insert(player.hand, card)
+                else
+                    log("Error: Ran out of cards during deal!") break
                 end
             end
-            if pot.amount > 0 then table.insert(pots, pot) end
+            if currentDealIndex == dealerPosition then break end -- Safety break for full circle
         end
     end
+
+    -- Send hands privately AFTER dealing is complete
+    for _, player in ipairs(players) do
+         if player.status == "playing" or player.status == "allin" then
+             sendToPlayer(player.id, { type = "deal_hand", hand = player.hand })
+         end
+    end
+
+    log("Hands dealt. Starting preflop betting.")
+    gameState = "preflop"
+
+    -- Broadcast game start info (including blinds posted)
+    broadcast({ type = "game_start",
+                dealer = dealerPosition,
+                smallBlind = smallBlindIndex,
+                bigBlind = bigBlindIndex,
+                pot = pot,
+                currentHighestBet = currentHighestBet,
+                players = getPublicPlayersTable() -- Send updated player list with statuses/chips
+              })
+
+    -- Determine first player to act (left of Big Blind)
+    actionPlayerIndex = findNextPlayerIndex(bigBlindIndex)
+    lastRaiserIndex = bigBlindIndex -- Initially, the BB is the 'last raiser'
+
+    log("First action to player index: " .. actionPlayerIndex)
+    requestAction(actionPlayerIndex)
+    updateMonitor()
 end
 
--- Broadcast state
-function broadcastState()
-    local stateData = {type = "state", communityCards = communityCards, pots = pots, currentBet = currentBet, currentPlayer = players[currentPlayer].id, blinds = blinds, round = round, showdown = showdown}
-    for _, player in ipairs(players) do if player.active then rednet.send(player.id, stateData) end end
+
+-- Action Handling
+local function handlePlayerAction(senderID, actionData)
+    local playerIndex = 0
+    local player = nil
+    for i, p in ipairs(players) do
+        if p.id == senderID then
+            player = p
+            playerIndex = i
+            break
+        end
+    end
+
+    if not player then
+        log("Error: Received action from unknown player ID " .. senderID)
+        return
+    end
+
+    -- Validate if it's the player's turn
+    if playerIndex ~= actionPlayerIndex then
+       log("Warning: Action received from player " .. player.name .. " (ID: "..senderID..") out of turn. Expected index: "..actionPlayerIndex)
+       sendToPlayer(player.id, { type = "error", message = "Not your turn."})
+       return
+    end
+
+    -- Validate action based on game state
+    if gameState ~= "preflop" and gameState ~= "flop" and gameState ~= "turn" and gameState ~= "river" then
+        log("Warning: Action received from player " .. player.name .. " during invalid state: " .. gameState)
+        sendToPlayer(player.id, { type = "error", message = "Cannot act now ("..gameState..")."})
+        return
+    end
+
+    local action = actionData.action
+    local amount = tonumber(actionData.amount) or 0 -- Ensure amount is a number
+    local callAmount = currentHighestBet - player.currentBetInRound
+    local canCheck = (callAmount <= 0)
+
+    log("Processing action '" .. action .. "' from " .. player.name .. " (Index: " .. playerIndex .. ") Amount: " .. amount)
+
+    local betPlaced = 0 -- Amount added to currentBetInRound this action
+
+    -- Perform Action Logic
+    if action == "fold" then
+        player.status = "folded"
+        log(player.name .. " folds.")
+        broadcast({ type = "player_action", playerID = player.id, playerName = player.name, action = "fold", pot = pot, currentHighestBet = currentHighestBet, players = getPublicPlayersTable() })
+
+    elseif action == "check" then
+        if not canCheck then
+            log("Invalid action: " .. player.name .. " tried to check when call is required.")
+            sendToPlayer(player.id, { type = "error", message = "Cannot check, must call " .. callAmount .. " or raise."})
+            requestAction(playerIndex) -- Re-request action from same player
+            return
+        end
+        log(player.name .. " checks.")
+        broadcast({ type = "player_action", playerID = player.id, playerName = player.name, action = "check", pot = pot, currentHighestBet = currentHighestBet, players = getPublicPlayersTable() })
+        -- Note: Checking doesn't change lastRaiserIndex
+
+    elseif action == "call" then
+        if callAmount <= 0 then
+            log("Invalid action: " .. player.name .. " tried to call when check is possible.")
+            -- Treat as check? Or reject? Let's treat as check if callAmount is 0 or less.
+             if callAmount == 0 then
+                 log(player.name .. " calls (effectively checks).")
+                 broadcast({ type = "player_action", playerID = player.id, playerName = player.name, action = "check", pot = pot, currentHighestBet = currentHighestBet, players = getPublicPlayersTable() })
+                 -- No bet placed, proceed turn
+             else -- callAmount < 0 shouldn't happen with correct logic
+                 sendToPlayer(player.id, { type = "error", message = "Invalid call action."})
+                 requestAction(playerIndex)
+                 return
+             end
+        else
+            local amountToCall = math.min(player.chips, callAmount) -- Can only call with available chips
+            betPlaced = amountToCall
+            player.chips = player.chips - amountToCall
+            player.currentBetInRound = player.currentBetInRound + amountToCall
+            log(player.name .. " calls " .. amountToCall .. ". Chips left: " .. player.chips .. ". Total bet in round: " .. player.currentBetInRound)
+
+            if player.chips == 0 then
+                player.status = "allin"
+                log(player.name .. " is all-in by calling.")
+            end
+            broadcast({ type = "player_action", playerID = player.id, playerName = player.name, action = "call", amount = amountToCall, pot = pot, currentHighestBet = currentHighestBet, players = getPublicPlayersTable() })
+            -- Note: Calling doesn't change lastRaiserIndex
+        end
+
+    elseif action == "bet" then
+         if currentHighestBet > 0 then -- Cannot 'bet' if there's already a bet, must 'raise'
+             log("Invalid action: " .. player.name .. " tried to bet when raise is required.")
+             sendToPlayer(player.id, { type = "error", message = "Cannot bet, must call " .. callAmount .. " or raise."})
+             requestAction(playerIndex)
+             return
+         end
+         if amount <= 0 then
+             log("Invalid action: " .. player.name .. " tried to bet zero/negative amount.")
+             sendToPlayer(player.id, { type = "error", message = "Bet amount must be positive."})
+             requestAction(playerIndex)
+             return
+         end
+         -- Basic validation: Bet must be at least Big Blind unless going all-in for less
+         if amount < gameSettings.bigBlind and amount < player.chips then
+             log("Invalid action: " .. player.name .. " bet " .. amount .. " (less than BB).")
+             sendToPlayer(player.id, { type = "error", message = "Bet must be at least " .. gameSettings.bigBlind .. " (or all-in)." })
+             requestAction(playerIndex)
+             return
+         end
+
+         local amountToBet = math.min(player.chips, amount)
+         betPlaced = amountToBet
+         player.chips = player.chips - amountToBet
+         player.currentBetInRound = player.currentBetInRound + amountToBet
+         currentHighestBet = player.currentBetInRound -- This bet sets the new highest bet
+         minRaiseAmount = amountToBet -- The next raise must be at least this amount higher
+         lastRaiserIndex = playerIndex -- This player is now the last aggressor
+
+         log(player.name .. " bets " .. amountToBet .. ". Chips left: " .. player.chips .. ". New high bet: " .. currentHighestBet)
+         if player.chips == 0 then
+             player.status = "allin"
+             log(player.name .. " is all-in betting.")
+         end
+         broadcast({ type = "player_action", playerID = player.id, playerName = player.name, action = "bet", amount = amountToBet, pot = pot, currentHighestBet = currentHighestBet, players = getPublicPlayersTable() })
+
+    elseif action == "raise" then
+        if callAmount < 0 then callAmount = 0 end -- Can always raise if action is on you, even if you could check
+        local raiseAmount = amount - currentHighestBet -- The amount *added* on top of the current highest bet
+        local minRaiseTotal = currentHighestBet + math.max(gameSettings.bigBlind, minRaiseAmount)
+
+        if amount < minRaiseTotal and amount < player.currentBetInRound + player.chips then
+            log("Invalid action: " .. player.name .. " raise to " .. amount .. " is less than minimum raise total of " .. minRaiseTotal)
+            sendToPlayer(player.id, { type = "error", message = "Minimum raise is to " .. minRaiseTotal .. " (or all-in)." })
+            requestAction(playerIndex)
+            return
+        end
+
+        local totalAmountNeeded = amount - player.currentBetInRound -- Total chips needed for this action
+        if totalAmountNeeded <= 0 then
+             log("Invalid action: " .. player.name .. " raise to " .. amount .. " is not more than current bet.")
+             sendToPlayer(player.id, { type = "error", message = "Raise amount must be higher than current bet." })
+             requestAction(playerIndex)
+             return
+        end
+
+        local amountToRaise = math.min(player.chips, totalAmountNeeded)
+        betPlaced = amountToRaise -- Chips added this action
+        player.chips = player.chips - amountToRaise
+        player.currentBetInRound = player.currentBetInRound + amountToRaise -- This is the new total bet in round
+
+        log(player.name .. " raises to " .. player.currentBetInRound .. " (added " .. amountToRaise .. "). Chips left: " .. player.chips)
+
+        -- Update game state only if it was a valid raise (not just an all-in call for less than min raise)
+        if player.currentBetInRound > currentHighestBet then
+             minRaiseAmount = player.currentBetInRound - currentHighestBet -- The size of the raise itself becomes the new min raise amount
+             currentHighestBet = player.currentBetInRound -- Set the new highest bet level
+             lastRaiserIndex = playerIndex -- This player is the new aggressor
+             log("New high bet: " .. currentHighestBet .. ". New min raise amount: " .. minRaiseAmount)
+        else
+             log("Raise was not higher than current bet (likely all-in call). High bet remains ".. currentHighestBet)
+        end
+
+
+        if player.chips == 0 then
+            player.status = "allin"
+            log(player.name .. " is all-in raising.")
+        end
+        broadcast({ type = "player_action", playerID = player.id, playerName = player.name, action = "raise", amount = player.currentBetInRound, pot = pot, currentHighestBet = currentHighestBet, players = getPublicPlayersTable() })
+
+    elseif action == "allin" then
+        local allInAmount = player.chips
+        betPlaced = allInAmount
+        local finalBetInRound = player.currentBetInRound + allInAmount
+        player.chips = 0
+        player.currentBetInRound = finalBetInRound
+        player.status = "allin"
+        log(player.name .. " goes all-in for " .. allInAmount .. "! Final bet in round: " .. finalBetInRound)
+
+        -- Check if the all-in constitutes a valid raise
+        if finalBetInRound > currentHighestBet then
+            local raiseAmount = finalBetInRound - currentHighestBet
+            -- Only update minRaiseAmount if the all-in raise was *at least* a min-raise itself
+            if raiseAmount >= minRaiseAmount then
+                 minRaiseAmount = raiseAmount
+                 log("All-in constitutes a full raise. New min raise amount: " .. minRaiseAmount)
+            else
+                 log("All-in is less than a full raise ('under-raise'). Min raise amount ("..minRaiseAmount..") remains unchanged for subsequent players.")
+            end
+            currentHighestBet = finalBetInRound
+            lastRaiserIndex = playerIndex
+            log("New high bet: " .. currentHighestBet)
+        else
+             log("All-in is effectively a call. High bet remains ".. currentHighestBet)
+        end
+        broadcast({ type = "player_action", playerID = player.id, playerName = player.name, action = "allin", amount = finalBetInRound, pot = pot, currentHighestBet = currentHighestBet, players = getPublicPlayersTable() })
+
+    else
+        log("Error: Unknown action '" .. action .. "' received from " .. player.name)
+        sendToPlayer(player.id, { type = "error", message = "Unknown action: " .. action })
+        requestAction(playerIndex) -- Re-request action
+        return
+    end
+
+    -- Action was valid and processed, advance to the next player/stage
+    advanceTurn()
+    updateMonitor() -- Update monitor after action and potential turn advance
 end
 
--- Check button click
-function isClickInButton(x, y, bx, by, bw, bh)
-    return x >= bx and x < bx + bw and y >= by and y < by + bh
+
+-- Rednet Handling
+local function openRednet()
+    local sides = {"back", "top", "bottom", "left", "right", "front"}
+    for _, side in ipairs(sides) do
+        if rednet.open(side) then
+            log("Rednet opened successfully on side: " .. side)
+            return true
+        end
+    end
+    log("Error: Failed to open rednet on any side. Is a modem attached?")
+    print("Error: Failed to open rednet on any side.")
+    return false
 end
 
--- Main loop
-function main()
-    math.randomseed(os.time())
-    rednet.host("poker", "server")
-    print("Hosting poker server on ID " .. os.getComputerID())
+local function messageHandler()
     while true do
-        local event, param1, param2, param3 = os.pullEvent()
-        if event == "rednet_message" then
-            local senderID, msg = param1, param2
-            if msg == nil or type(msg) ~= "table" then
-                print("Received invalid message from " .. (senderID or "unknown") .. ": Message is nil or not a table")
-            else
-                print("Received: " .. (msg.type or "nil") .. " from " .. senderID)
-                if msg.type == "join" and state == "lobby" then
-                    print("Processing join for ID " .. senderID .. ", diskID " .. (msg.diskID or "nil"))
-                    if not msg.diskID then
-                        rednet.send(senderID, {type = "error", message = "No diskID"})
-                        print("Join failed: No diskID provided")
+        local senderID, message, receivedProtocol = rednet.receive(protocol, 0.5) -- Check every 0.5 seconds
+
+        if senderID then
+            if receivedProtocol == protocol then
+                -- log("Received message from " .. senderID .. " via protocol '" .. receivedProtocol .. "'") -- Can be noisy
+                if type(message) == "table" and message.type then
+                    -- log("Message content: " .. textutils.serialize(message)) -- Very noisy
+                    if message.type == "join_request" then
+                        addPlayer(senderID, message.name)
+                    elseif message.type == "leave_request" then
+                         removePlayer(senderID)
+                    elseif message.type == "player_action" then
+                        -- Ensure data sub-table exists
+                        if type(message.data) == "table" and message.data.action then
+                             handlePlayerAction(senderID, message.data)
+                        else
+                             log("Received invalid player_action format from "..senderID..": "..textutils.serialize(message))
+                             sendToPlayer(senderID, {type="error", message="Invalid action format."})
+                        end
+                    elseif message.type == "ready_status" then
+                         if gameState == "lobby" then
+                             local player = nil
+                             for _, p in ipairs(players) do if p.id == senderID then player = p break end end
+                             if player then
+                                 player.isReady = message.isReady
+                                 log("Player " .. player.name .. " is now " .. (message.isReady and "ready" or "not ready"))
+                                 broadcast({type="player_ready", playerID=senderID, isReady=message.isReady}, senderID) -- Inform others
+                                 updateMonitor()
+                                 -- Check if enough players are ready to auto-start
+                                 local readyCount = 0
+                                 for _, p in ipairs(players) do if p.isReady then readyCount = readyCount + 1 end end
+                                 if readyCount >= gameSettings.minPlayers and #players >= gameSettings.minPlayers then
+                                     log("Enough players ready, starting game...")
+                                     startGame()
+                                 end
+                             end
+                         else
+                             log("Received ready_status outside of lobby from "..senderID)
+                             sendToPlayer(senderID, {type="error", message="Can only set ready status in lobby."})
+                         end
+                    elseif message.type == "chat" then
+                        local player = nil
+                        for _, p in ipairs(players) do if p.id == senderID then player = p break end end
+                        if player and type(message.text) == "string" and string.len(message.text) > 0 then
+                            local chatText = string.sub(message.text, 1, 100) -- Limit chat message length
+                            log("Chat from " .. player.name .. ": " .. chatText)
+                            broadcast({type="chat_message", name=player.name, text=chatText}, nil) -- Send to everyone including sender
+                        end
+                    -- Add message type for manual start maybe?
+                    -- elseif message.type == "admin_start_game" and senderID == hostID then
+                    --     if gameState == "lobby" then startGame() end
                     else
-                        local balance, err = readBalance(senderID, msg.diskID)
-                        if balance and balance >= buyIn then
-                            balance = balance - buyIn
-                            if writeBalance(senderID, msg.diskID, balance) then
-                                local playerName = readUsername(senderID, msg.diskID)
-                                table.insert(players, {id = senderID, name = playerName, chips = startingChips, diskID = msg.diskID, hand = {}, active = true, betThisRound = 0, showCards = false})
-                                rednet.send(senderID, {type = "joined", name = playerName})
-                                message = "Player " .. playerName .. " joined!"
-                                print("Join successful for " .. playerName)
-                                playSound("block.note_block.hat")
-                            else
-                                rednet.send(senderID, {type = "error", message = "Write failed"})
-                                print("Join failed: Write failed")
-                            end
-                        else
-                            rednet.send(senderID, {type = "error", message = err or "Insufficient funds"})
-                            print("Join failed: " .. (err or "Insufficient funds"))
-                        end
+                        log("Received unknown message type: " .. message.type .. " from ".. senderID)
+                        -- Don't send error for unknown types, could be future features
                     end
-                elseif msg.type == "action" and state == "game" and senderID == players[currentPlayer].id and not showdown then
-                    local player = players[currentPlayer]
-                    if msg.action == "fold" then player.active = false; playSound("block.note_block.bass")
-                    elseif msg.action == "check" and player.betThisRound == currentBet then playSound("block.note_block.hat")
-                    elseif msg.action == "call" and player.chips >= currentBet - (player.betThisRound or 0) then
-                        local bet = currentBet - (player.betThisRound or 0); player.chips = player.chips - bet; player.betThisRound = (player.betThisRound or 0) + bet; playSound("block.note_block.hat")
-                    elseif msg.action == "raise" and player.chips >= msg.amount - (player.betThisRound or 0) and msg.amount > currentBet then
-                        local bet = msg.amount - (player.betThisRound or 0); player.chips = player.chips - bet; player.betThisRound = (player.betThisRound or 0) + bet; currentBet = msg.amount; playSound("block.note_block.hat")
-                    elseif msg.action == "allin" and player.chips > 0 then
-                        local bet = player.chips; player.chips = 0; player.betThisRound = (player.betThisRound or 0) + bet
-                        if player.betThisRound > currentBet then currentBet = player.betThisRound end
-                        playSound("block.note_block.hat")
-                    else rednet.send(senderID, {type = "error", message = "Invalid action"}) end
-                    currentPlayer = currentPlayer % #players + 1
-                    while not players[currentPlayer].active or players[currentPlayer].chips == 0 do currentPlayer = currentPlayer % #players + 1 end
-                    broadcastState()
-                    local activePlayers, matchedBets = 0, 0
-                    for _, p in ipairs(players) do 
-                        if p.active and p.chips > 0 then 
-                            activePlayers = activePlayers + 1 
-                            if p.betThisRound == currentBet or p.chips == 0 then 
-                                matchedBets = matchedBets + 1 
-                            end 
-                        end 
-                    end
-                    if activePlayers <= 1 or (matchedBets == activePlayers and currentPlayer == dealerPos) then
-                        createSidePots()
-                        if activePlayers <= 1 then
-                            local winner = nil
-                            for _, p in ipairs(players) do if p.active then winner = p; break end end
-                            if winner then
-                                for _, pot in ipairs(pots) do
-                                    local rake = math.floor(pot.amount * 0.01)
-                                    pot.amount = pot.amount - rake
-                                    winner.chips = winner.chips + pot.amount
-                                end
-                                message = winner.name .. " wins " .. pots[1].amount .. " chips!"
-                                winner.showCards = true
-                                showdownResponses[winner.id] = "show"
-                                playSound("entity.player.levelup")
-                            end
-                            pots = {{amount = 0, eligible = {}}}
-                            currentBet = 0
-                            round = "preflop"
-                            communityCards = {}
-                            showdown = false
-                            showdownResponses = {}
-                            for _, p in ipairs(players) do p.betThisRound = 0; p.active = p.chips > 0; p.showCards = false end
-                            local remainingPlayers = 0
-                            for _, p in ipairs(players) do 
-                                if p.chips > 0 then 
-                                    remainingPlayers = remainingPlayers + 1 
-                                else 
-                                    rednet.send(p.id, {type = "eliminated"})
-                                end 
-                            end
-                            if remainingPlayers <= 1 then
-                                state = "lobby"
-                                for _, p in ipairs(players) do 
-                                    if p.chips > 0 then
-                                        local currentBalance = readBalance(p.id, p.diskID)
-                                        if currentBalance then writeBalance(p.id, p.diskID, currentBalance + p.chips) end
-                                    end 
-                                end
-                                players = {}
-                                message = "Game over! Insert disks to join again."
-                            else
-                                initDeck()
-                                shuffleDeck()
-                                dealCards()
-                                dealerPos = dealerPos % #players + 1
-                                currentPlayer = (dealerPos + 1) % #players + 1
-                                while not players[currentPlayer].active or players[currentPlayer].chips == 0 do currentPlayer = currentPlayer % #players + 1 end
-                                local sbPlayer = (dealerPos + 1) % #players + 1
-                                local bbPlayer = (dealerPos + 2) % #players + 1
-                                if players[sbPlayer].chips >= blinds.small then
-                                    players[sbPlayer].chips = players[sbPlayer].chips - blinds.small
-                                    players[sbPlayer].betThisRound = blinds.small
-                                    pots[1].amount = pots[1].amount + blinds.small
-                                end
-                                if players[bbPlayer].chips >= blinds.big then
-                                    players[bbPlayer].chips = players[bbPlayer].chips - blinds.big
-                                    players[bbPlayer].betThisRound = blinds.big
-                                    pots[1].amount = pots[1].amount + blinds.big
-                                    currentBet = blinds.big
-                                end
-                                for _, p in ipairs(players) do table.insert(pots[1].eligible, p.id) end
-                                broadcastState()
-                            end
-                        elseif round == "preflop" then
-                            round = "flop"
-                            communityCards = {table.remove(deck), table.remove(deck), table.remove(deck)}
-                            currentBet = 0
-                            for _, p in ipairs(players) do p.betThisRound = 0 end
-                            currentPlayer = (dealerPos + 1) % #players + 1
-                            while not players[currentPlayer].active or players[currentPlayer].chips == 0 do currentPlayer = currentPlayer % #players + 1 end
-                            broadcastState()
-                        elseif round == "flop" then
-                            round = "turn"
-                            table.insert(communityCards, table.remove(deck))
-                            currentBet = 0
-                            for _, p in ipairs(players) do p.betThisRound = 0 end
-                            currentPlayer = (dealerPos + 1) % #players + 1
-                            while not players[currentPlayer].active or players[currentPlayer].chips == 0 do currentPlayer = currentPlayer % #players + 1 end
-                            broadcastState()
-                        elseif round == "turn" then
-                            round = "river"
-                            table.insert(communityCards, table.remove(deck))
-                            currentBet = 0
-                            for _, p in ipairs(players) do p.betThisRound = 0 end
-                            currentPlayer = (dealerPos + 1) % #players + 1
-                            while not players[currentPlayer].active or players[currentPlayer].chips == 0 do currentPlayer = currentPlayer % #players + 1 end
-                            broadcastState()
-                        elseif round == "river" then
-                            showdown = true
-                            for _, p in ipairs(players) do if p.active then rednet.send(p.id, {type = "showdown"}) end end
-                            broadcastState()
-                        end
-                    end
-                elseif msg.type == "showdown_choice" and state == "game" and showdown then
-                    local player = nil
-                    for _, p in ipairs(players) do if p.id == senderID and p.active then player = p; break end end
-                    if player then
-                        showdownResponses[senderID] = msg.choice
-                        player.showCards = msg.choice == "show"
-                        print("Showdown choice: " .. msg.choice .. " from " .. senderID)
-                    end
-                    local activePlayers = 0
-                    for _, p in ipairs(players) do if p.active then activePlayers = activePlayers + 1 end end
-                    if table.getn(showdownResponses) == activePlayers then
-                        local handResults = {}
-                        for _, p in ipairs(players) do if p.active then table.insert(handResults, {player = p, hand = evaluateHand(p)}) end end
-                        table.sort(handResults, function(a, b) return compareHands(a.hand, b.hand) > 0 end)
-                        for _, pot in ipairs(pots) do
-                            local eligiblePlayers = {}
-                            for _, p in ipairs(handResults) do 
-                                for _, id in ipairs(pot.eligible) do 
-                                    if p.player.id == id then table.insert(eligiblePlayers, p) break end 
-                                end 
-                            end
-                            if #eligiblePlayers > 0 then
-                                local bestHand = eligiblePlayers[1].hand
-                                local winners = {}
-                                for _, p in ipairs(eligiblePlayers) do 
-                                    if compareHands(p.hand, bestHand) == 0 then table.insert(winners, p.player) end 
-                                end
-                                local rake = math.floor(pot.amount * 0.01)
-                                pot.amount = pot.amount - rake
-                                local split = math.floor(pot.amount / #winners)
-                                for _, winner in ipairs(winners) do
-                                    winner.chips = winner.chips + split
-                                    winner.showCards = true
-                                    showdownResponses[winner.id] = "show"
-                                end
-                                message = message .. winners[1].name .. (#winners > 1 and " and others" or "") .. " win " .. split .. " chips! "
-                                playSound("entity.player.levelup")
-                            end
-                        end
-                        pots = {{amount = 0, eligible = {}}}
-                        currentBet = 0
-                        round = "preflop"
-                        communityCards = {}
-                        showdown = false
-                        showdownResponses = {}
-                        for _, p in ipairs(players) do p.betThisRound = 0; p.active = p.chips > 0; p.showCards = false end
-                        local remainingPlayers = 0
-                        for _, p in ipairs(players) do 
-                            if p.chips > 0 then 
-                                remainingPlayers = remainingPlayers + 1 
-                            else 
-                                rednet.send(p.id, {type = "eliminated"})
-                            end 
-                        end
-                        if remainingPlayers <= 1 then
-                            state = "lobby"
-                            for _, p in ipairs(players) do 
-                                if p.chips > 0 then
-                                    local currentBalance = readBalance(p.id, p.diskID)
-                                    if currentBalance then writeBalance(p.id, p.diskID, currentBalance + p.chips) end
-                                end 
-                            end
-                            players = {}
-                            message = "Game over! Insert disks to join again."
-                        else
-                            initDeck()
-                            shuffleDeck()
-                            dealCards()
-                            dealerPos = dealerPos % #players + 1
-                            currentPlayer = (dealerPos + 1) % #players + 1
-                            while not players[currentPlayer].active or players[currentPlayer].chips == 0 do currentPlayer = currentPlayer % #players + 1 end
-                            local sbPlayer = (dealerPos + 1) % #players + 1
-                            local bbPlayer = (dealerPos + 2) % #players + 1
-                            if players[sbPlayer].chips >= blinds.small then
-                                players[sbPlayer].chips = players[sbPlayer].chips - blinds.small
-                                players[sbPlayer].betThisRound = blinds.small
-                                pots[1].amount = pots[1].amount + blinds.small
-                            end
-                            if players[bbPlayer].chips >= blinds.big then
-                                players[bbPlayer].chips = players[bbPlayer].chips - blinds.big
-                                players[bbPlayer].betThisRound = blinds.big
-                                pots[1].amount = pots[1].amount + blinds.big
-                                currentBet = blinds.big
-                            end
-                            for _, p in ipairs(players) do table.insert(pots[1].eligible, p.id) end
-                            broadcastState()
-                        end
-                    end
+                else
+                    log("Received non-table or invalid message format from " .. senderID)
+                    sendToPlayer(senderID, { type = "error", message = "Invalid message format." })
                 end
-            end
-        elseif event == "monitor_touch" and state == "lobby" and #players >= 2 then
-            local x, y = param2, param3
-            if isClickInButton(x, y, 2, 8, 10, 3) then
-                state = "game"
-                initDeck()
-                shuffleDeck()
-                dealCards()
-                currentPlayer = (dealerPos + 1) % #players + 1
-                local sbPlayer = (dealerPos + 1) % #players + 1
-                local bbPlayer = (dealerPos + 2) % #players + 1
-                if players[sbPlayer].chips >= blinds.small then
-                    players[sbPlayer].chips = players[sbPlayer].chips - blinds.small
-                    players[sbPlayer].betThisRound = blinds.small
-                    pots[1].amount = pots[1].amount + blinds.small
-                end
-                if players[bbPlayer].chips >= blinds.big then
-                    players[bbPlayer].chips = players[bbPlayer].chips - blinds.big
-                    players[bbPlayer].betThisRound = blinds.big
-                    pots[1].amount = pots[1].amount + blinds.big
-                    currentBet = blinds.big
-                end
-                for _, p in ipairs(players) do table.insert(pots[1].eligible, p.id) end
-                broadcastState()
-                playSound("block.note_block.hat")
-            end
-        end
-
-        -- Update monitor display
-        clearOutput(state == "lobby" and colors.yellow or colors.black)
-        writeOutput(1, 1, "Texas Hold'em")
-        writeOutput(1, 2, "Players: " .. #players .. " | Blinds: " .. blinds.small .. "/" .. blinds.big)
-        writeOutput(1, 4, message)
-
-        if state == "lobby" then
-            writeOutput(1, 6, "Waiting for players (Buy-in: " .. buyIn .. " chips)")
-            if #players >= 2 then drawButton(2, 8, 10, 3, "Start", colors.green) end
-        elseif state == "game" then
-            local playerStr = ""
-            for i, player in ipairs(players) do playerStr = playerStr .. player.name .. ": " .. player.chips .. " chips\n" end
-            writeOutput(2, 6, playerStr)
-            local commStr = "Community: "
-            for _, card in ipairs(communityCards) do commStr = commStr .. (card.rank or "?") .. (card.suit or "?") .. " " end
-            writeOutput(2, 10, commStr)
-            local potStr = "Pots: "
-            for i, pot in ipairs(pots) do potStr = potStr .. (i > 1 and "Side " or "Main ") .. pot.amount .. " " end
-            writeOutput(2, 11, potStr)
-            writeOutput(2, 12, "Bet: " .. currentBet)
-            if showdown then
-                local showdownStr = "Showdown: "
-                for id, choice in pairs(showdownResponses) do
-                    for _, player in ipairs(players) do
-                        if player.id == id then
-                            showdownStr = showdownStr .. player.name .. ": " .. (choice == "show" and (player.hand[1].rank .. player.hand[1].suit .. " " .. player.hand[2].rank .. player.hand[2].suit) or "Mucked") .. " | "
-                        end
-                    end
-                end
-                writeOutput(2, 13, showdownStr)
             else
-                writeOutput(2, 13, "Turn: " .. players[currentPlayer].name)
+                 log("Received message from " .. senderID .. " with unexpected protocol: " .. (receivedProtocol or "nil"))
             end
         end
-        message = ""
-        sleep(0.1)
+
+        -- Non-blocking tasks can go here (e.g., check timers, etc.)
+        -- Example: Auto-start timer in lobby?
+
+        -- Small sleep if receive timeout is very short or zero
+        -- sleep(0.05) -- Already handled by receive timeout
     end
 end
 
-main()
+-- Main Execution
+if not openRednet() then
+    return -- Exit if rednet couldn't be opened
+end
+
+setupMonitor() -- Initial monitor setup
+log("Poker server started. Host ID: " .. hostID)
+log("Waiting for players to join...")
+gameState = "lobby" -- Ensure starting state
+updateMonitor() -- Initial monitor update
+
+-- Start the main message handling loop
+messageHandler()
+
+-- Cleanup (never reached in normal operation)
+log("Server shutting down.")
+rednet.close()
+if monitor then pcall(monitor.clear) end
+
