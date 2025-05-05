@@ -1,11 +1,9 @@
--- Embedded DFPWM Decoder (sourced from gamax92/dfpwm.lua, MIT License, adapted for Lua 5.1 with bit API)
-local bit = require("bit") -- Load ComputerCraft's bit API
-
+-- Embedded DFPWM Decoder (sourced from gamax92/dfpwm.lua, MIT License, adapted for Lua 5.1 without bit API)
 local function make_decoder()
     local previous_sample = 0
     local charge = 0
     local strength = 0
-    local lastbit = neuf
+    local lastbit = false
     local filter_mult = 0.9
 
     local function reset()
@@ -26,7 +24,8 @@ local function make_decoder()
                 bitpos = 8
             end
             bitpos = bitpos - 1
-            local bit = bit.band(byte, bit.blshift(1, bitpos)) ~= 0
+            local mask = 2 ^ bitpos
+            local bit = (math.floor(byte / mask) % 2) == 1
 
             local target = bit and 127 or -128
             local diff = target - charge
