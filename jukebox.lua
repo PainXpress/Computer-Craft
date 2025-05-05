@@ -81,6 +81,7 @@ local playing = false
 local paused = false
 local speaker_ready = {}
 local input_buffer = ""
+local error_message = nil
 local decoder = nil
 for _, speaker in pairs(speakers) do
     speaker_ready[peripheral.getName(speaker)] = true
@@ -90,20 +91,35 @@ end
 local function drawGUI()
     monitor.clear()
     monitor.setCursorPos(1, 1)
-    monitor.write("Now Playing: " .. (current_song_url and current_song_url:sub(1, 20) or "None"))
+    monitor.write("Jukebox - Play Any Song!")
     
     monitor.setCursorPos(1, 3)
+    monitor.write("Now Playing: " .. (current_song_url and current_song_url:sub(1, 20) or "None"))
+    
+    monitor.setCursorPos(1, 5)
     monitor.write("Queue:")
     for i, url in ipairs(queue) do
         if i <= 5 then
-            monitor.setCursorPos(1, 3 + i)
+            monitor.setCursorPos(1, 5 + i)
             monitor.write(i .. ". " .. url:sub(1, 20))
         end
     end
     
-    monitor.setCursorPos(1, 10)
+    monitor.setCursorPos(1, 12)
+    monitor.write("Type 'add <url>' in terminal.")
+    monitor.setCursorPos(1, 13)
+    monitor.write("For YouTube: Convert to DFPWM at")
+    monitor.setCursorPos(1, 14)
+    monitor.write("music.madefor.cc, use that URL.")
+    
+    if error_message then
+        monitor.setCursorPos(1, 16)
+        monitor.write(error_message)
+    end
+    
+    monitor.setCursorPos(1, 18)
     monitor.write("[" .. (paused and "Play" or "Pause") .. "]")
-    monitor.setCursorPos(10, 10)
+    monitor.setCursorPos(10, 18)
     monitor.write("[Skip]")
 end
 
@@ -117,7 +133,9 @@ local function startSong(url)
     end
     local response = http.get(url, nil, true)
     if not response then
-        error("Failed to stream song from " .. url)
+        error_message = "Failed to stream: " .. url:sub(1, 20)
+        drawGUI()
+        return false
     end
     current_response = response
     current_song_url = url
@@ -127,7 +145,9 @@ local function startSong(url)
     for _, speaker in pairs(speakers) do
         speaker_ready[peripheral.getName(speaker)] = true
     end
+    error_message = nil
     drawGUI()
+    return true
 end
 
 local function skipSong()
@@ -165,11 +185,26 @@ end
 
 -- Queue management
 local function addToQueue(url)
+    -- Check if URL is a YouTube link
+    if url:match("youtube%.com") or url:match("youtu%.be") then
+        error_message = "Convert YouTube URL to DFPWM first."
+        drawGUI()
+        return
+    end
+    
+    -- Check if URL ends with .dfpwm
+    if not url:match("%.dfpwm$") then
+        error_message = "URL must end with .dfpwm"
+        drawGUI()
+        return
+    end
+    
     table.insert(queue, url)
-    drawGUI()
     if not playing then
         local next_url = table.remove(queue, 1)
         startSong(next_url)
+    else
+        drawGUI()
     end
 end
 
@@ -183,6 +218,7 @@ end
 
 -- Main loop
 drawGUI()
+print("Type 'add <url>' to queue a song. Press Ctrl+T to exit.")
 while true do
     if playing and not paused and allSpeakersReady() then
         local chunk = current_response.read(1024)
@@ -208,7 +244,7 @@ while true do
     local event, p1, p2, p3 = os.pullEvent()
     if event == "monitor_touch" then
         local x, y = p2, p3
-        if y == 10 then
+        if y == 18 then
             if x >= 1 and x <= 6 then
                 togglePause()
             elseif x >= 10 and x <= 15 then
