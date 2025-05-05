@@ -1,4 +1,4 @@
--- Embedded DFPWM Decoder (sourced from gamax92/dfpwm.lua, MIT License)
+-- Embedded DFPWM Decoder (sourced from gamax92/dfpwm.lua, MIT License, adapted for Lua 5.1)
 local function make_decoder()
     local previous_sample = 0
     local charge = 0
@@ -20,7 +20,7 @@ local function make_decoder()
 
         for i = 1, #chunk * 8 do
             if bitpos == 0 then
-                byte = chunk:byte((i - 1) // 8 + 1) or 0
+                byte = chunk:byte(math.floor((i - 1) / 8) + 1) or 0
                 bitpos = 8
             end
             bitpos = bitpos - 1
@@ -93,7 +93,7 @@ local function drawGUI()
     monitor.setCursorPos(1, 3)
     monitor.write("Queue:")
     for i, url in ipairs(queue) do
-        if i <= 5 then -- Limit to 5 displayed items
+        if i <= 5 then
             monitor.setCursorPos(1, 3 + i)
             monitor.write(i .. ". " .. url:sub(1, 20))
         end
@@ -113,7 +113,7 @@ local function startSong(url)
             speaker.stop()
         end
     end
-    local response = http.get(url, nil, true) -- binary mode
+    local response = http.get(url, nil, true)
     if not response then
         error("Failed to stream song from " .. url)
     end
@@ -191,7 +191,6 @@ while true do
                 speaker_ready[peripheral.getName(speaker)] = false
             end
         else
-            -- End of song
             current_response.close()
             current_response = nil
             playing = false
@@ -208,9 +207,9 @@ while true do
     if event == "monitor_touch" then
         local x, y = p2, p3
         if y == 10 then
-            if x >= 1 and x <= 6 then -- Pause/Play button
+            if x >= 1 and x <= 6 then
                 togglePause()
-            elseif x >= 10 and x <= 15 then -- Skip button
+            elseif x >= 10 and x <= 15 then
                 skipSong()
             end
         end
