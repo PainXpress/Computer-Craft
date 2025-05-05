@@ -255,6 +255,7 @@ while true do
         speaker_ready[p1] = true
     elseif event == "char" then
         input_buffer = input_buffer .. p1
+        print("Typing: " .. input_buffer) -- Debug: Show input in terminal
     elseif event == "key" and p1 == keys.enter then
         if input_buffer:match("^add (.+)") then
             local url = input_buffer:match("^add (.+)")
