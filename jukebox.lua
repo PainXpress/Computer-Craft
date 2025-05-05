@@ -80,6 +80,7 @@ local current_response = nil
 local playing = false
 local paused = false
 local speaker_ready = {}
+local input_mode = false
 local input_buffer = ""
 local decoder = nil
 for _, speaker in pairs(speakers) do
@@ -90,21 +91,33 @@ end
 local function drawGUI()
     monitor.clear()
     monitor.setCursorPos(1, 1)
-    monitor.write("Now Playing: " .. (current_song_url and current_song_url:sub(1, 20) or "None"))
+    monitor.write("Jukebox - Play Any Song!")
     
     monitor.setCursorPos(1, 3)
-    monitor.write("Queue:")
-    for i, url in ipairs(queue) do
-        if i <= 5 then
-            monitor.setCursorPos(1, 3 + i)
-            monitor.write(i .. ". " .. url:sub(1, 20))
-        end
+    monitor.write("Now Playing: " .. (current_song_url and current_song_url:sub(1, 20) or "None"))
+    
+    monitor.setCursorPos(1, 5)
+    if input_mode then
+        monitor.write("Enter YouTube URL: " .. input_buffer .. "_")
+        monitor.setCursorPos(1, 6)
+        monitor.write("Click [Done] when ready.")
+    else
+        monitor.write("Click [Add Song] to queue.")
     end
     
     monitor.setCursorPos(1, 10)
-    monitor.write("[" .. (paused and "Play" or "Pause") .. "]")
+    monitor.write("[" .. (input_mode and "Done" or "Add Song") .. "]")
     monitor.setCursorPos(10, 10)
+    monitor.write("[" .. (paused and "Play" or "Pause") .. "]")
+    monitor.setCursorPos(20, 10)
     monitor.write("[Skip]")
+    
+    if not input_mode then
+        monitor.setCursorPos(1, 12)
+        monitor.write("Note: Convert YouTube to DFPWM at")
+        monitor.setCursorPos(1, 13)
+        monitor.write("music.madefor.cc, then use that URL.")
+    end
 end
 
 -- Playback functions
@@ -210,20 +223,29 @@ while true do
         local x, y = p2, p3
         if y == 10 then
             if x >= 1 and x <= 6 then
-                togglePause()
+                if input_mode then
+                    input_mode = false
+                    if input_buffer:match("https?://") then
+                        addToQueue(input_buffer)
+                    else
+                        monitor.setCursorPos(1, 14)
+                        monitor.write("Invalid URL. Use DFPWM link.")
+                    end
+                    input_buffer = ""
+                else
+                    input_mode = true
+                end
+                drawGUI()
             elseif x >= 10 and x <= 15 then
+                togglePause()
+            elseif x >= 20 and x <= 25 then
                 skipSong()
             end
+        elseif input_mode and y >= 5 and y <= 5 then
+            input_buffer = input_buffer .. (string.char(p3) or "")
+            drawGUI()
         end
     elseif event == "speaker_audio_empty" then
         speaker_ready[p1] = true
-    elseif event == "char" then
-        input_buffer = input_buffer .. p1
-    elseif event == "key" and p1 == keys.enter then
-        if input_buffer:match("^add (.+)") then
-            local url = input_buffer:match("^add (.+)")
-            addToQueue(url)
-        end
-        input_buffer = ""
     end
 end
