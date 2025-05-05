@@ -62,8 +62,9 @@ else
 end
 
 -- Initialize peripherals
-local speakers = {peripheral.find("speaker")}
-local monitor = peripheral.find("monitor")[1]
+local speakers = {peripheral.find("minecraft:speaker")}
+local monitors = {peripheral.find("monitor")}
+local monitor = monitors[1]
 if not monitor or #speakers == 0 then
     error("Monitor or speakers not found. Please connect them.")
 end
