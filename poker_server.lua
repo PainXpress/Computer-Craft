@@ -1,9 +1,39 @@
 -- Poker Tournament Server for GearHallow Casino
--- Save as 'poker_server.lua' on the server computer (ID 1)
+-- Save as 'poker_server.lua' on the server computer (ID 394)
 -- Requires a wired modem on back
+-- Reads BANK_ID and TERMINAL_IDS from config.txt
 
+-- Load configuration
+local function loadConfig()
+    local config = {BANK_ID = 395, TERMINAL_IDS = {391, 393}}
+    if fs.exists("config.txt") then
+        local file = fs.open("config.txt", "r")
+        local content = file.readAll()
+        file.close()
+        for line in content:gmatch("[^\r\n]+") do
+            local key, value = line:match("^(%S+)=(.+)$")
+            if key == "BANK_ID" then
+                config.BANK_ID = tonumber(value) or config.BANK_ID
+            elseif key == "TERMINAL_IDS" then
+                config.TERMINAL_IDS = {}
+                for id in value:gmatch("%d+") do
+                    table.insert(config.TERMINAL_IDS, tonumber(id))
+                end
+            end
+        end
+    else
+        local file = fs.open("config.txt", "w")
+        file.writeLine("BANK_ID=395")
+        file.writeLine("TERMINAL_IDS=391,393")
+        file.close()
+    end
+    return config
+end
+
+local config = loadConfig()
 local modem = peripheral.wrap("back") or error("No modem found on back side", 0)
-local BANK_ID = 10 -- Bank computer ID
+local BANK_ID = config.BANK_ID
+local VALID_TERMINAL_IDS = config.TERMINAL_IDS
 local TOURNAMENT_BUYIN = 300 -- Chips required for buy-in
 local STARTING_CHIPS = 3000 -- Tournament starting stack
 local MAX_PLAYERS = 9
@@ -383,23 +413,37 @@ function main()
                 if event == "rednet_message" then
                     local sender, message = p1, p2
                     if message.type == "register" and #players < MAX_PLAYERS then
-                        rednet.send(BANK_ID, {type = "deduct", amount = TOURNAMENT_BUYIN, player = message.name})
-                        local _, response = rednet.receive(nil, 5)
-                        if response and response.type == "deduct_response" and response.success then
-                            table.insert(players, {
-                                id = sender,
-                                name = message.name,
-                                chips = STARTING_CHIPS,
-                                active = true,
-                                folded = false,
-                                cards = {},
-                                current_bet = 0
-                            })
-                            rednet.send(sender, {type = "message", text = "Registered! Note: 10% of winnings are withheld by the casino. Waiting for game to start."})
-                            print(message.name .. " registered")
-                            saveState()
+                        -- Validate terminal ID
+                        local valid_terminal = false
+                        for _, id in ipairs(VALID_TERMINAL_IDS) do
+                            if sender == id then
+                                valid_terminal = true
+                                break
+                            end
+                        end
+                        if not valid_terminal then
+                            rednet.send(sender, {type = "message", text = "Invalid terminal ID. Contact casino staff."})
+                        elseif message.name and message.name ~= "" then
+                            rednet.send(BANK_ID, {type = "deduct", amount = TOURNAMENT_BUYIN, player = message.name})
+                            local _, response = rednet.receive(nil, 5)
+                            if response and response.type == "deduct_response" and response.success then
+                                table.insert(players, {
+                                    id = sender,
+                                    name = message.name,
+                                    chips = STARTING_CHIPS,
+                                    active = true,
+                                    folded = false,
+                                    cards = {},
+                                    current_bet = 0
+                                })
+                                rednet.send(sender, {type = "message", text = "Registered! Note: 10% of winnings are withheld by the casino. Waiting for game to start."})
+                                print(message.name .. " registered")
+                                saveState()
+                            else
+                                rednet.send(sender, {type = "message", text = "Failed to deduct buy-in. Insert disk or check balance."})
+                            end
                         else
-                            rednet.send(sender, {type = "message", text = "Failed to deduct buy-in. Insert disk or check balance."})
+                            rednet.send(sender, {type = "message", text = "Invalid name. Try again."})
                         end
                     end
                 elseif event == "timer" and p1 == timer then
