@@ -1,10 +1,33 @@
 -- Poker Tournament Client for GearHallow Casino
--- Save as 'poker_client.lua' on player terminal computers (IDs 11-19)
+-- Save as 'poker_client.lua' on player terminal computers (e.g., IDs 391, 393)
 -- Requires a wired modem on back and an advanced monitor on right
+-- Reads SERVER_ID from config.txt
 
+-- Load configuration
+local function loadConfig()
+    local config = {SERVER_ID = 394}
+    if fs.exists("config.txt") then
+        local file = fs.open("config.txt", "r")
+        local content = file.readAll()
+        file.close()
+        for line in content:gmatch("[^\r\n]+") do
+            local key, value = line:match("^(%S+)=(.+)$")
+            if key == "SERVER_ID" then
+                config.SERVER_ID = tonumber(value) or config.SERVER_ID
+            end
+        end
+    else
+        local file = fs.open("config.txt", "w")
+        file.writeLine("SERVER_ID=394")
+        file.close()
+    end
+    return config
+end
+
+local config = loadConfig()
 local modem = peripheral.wrap("back") or error("No modem found on back side", 0)
 local monitor = peripheral.wrap("right") or error("No monitor found on right side", 0)
-local SERVER_ID = 1 -- Poker server ID
+local SERVER_ID = config.SERVER_ID
 local player_name = nil
 local buttons = {} -- {x, y, width, height, label, action}
 local raise_amount = 0
