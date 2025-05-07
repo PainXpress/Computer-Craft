@@ -1,7 +1,8 @@
 -- Poker Tournament Client for GearHallow Casino
 -- Save as 'poker_client.lua' on player terminal computers (e.g., IDs 391, 393)
--- Requires a wired modem on back and an advanced monitor on right
+-- Requires a wired modem on back, advanced monitor on right, disk drive on left
 -- Reads SERVER_ID from config.txt
+-- Handles buy-in via local disk drive
 
 -- Load configuration
 local function loadConfig()
@@ -27,7 +28,9 @@ end
 local config = loadConfig()
 local modem = peripheral.wrap("back") or error("No modem found on back side", 0)
 local monitor = peripheral.wrap("right") or error("No monitor found on right side", 0)
+local drive = peripheral.wrap("left") or error("No disk drive found on left side", 0)
 local SERVER_ID = config.SERVER_ID
+local TOURNAMENT_BUYIN = 300 -- Chips required for buy-in
 local player_name = nil
 local buttons = {} -- {x, y, width, height, label, action}
 local raise_amount = 0
@@ -42,6 +45,34 @@ monitor.setTextScale(0.5)
 monitor.clear()
 monitor.setBackgroundColor(colors.black)
 monitor.setTextColor(colors.white)
+
+-- Read balance from disk
+function readBalance()
+    if not drive.isDiskPresent() then
+        return nil, "No disk inserted"
+    end
+    local path = drive.getMountPath()
+    if fs.exists(fs.combine(path, "balance.txt")) then
+        local file = fs.open(fs.combine(path, "balance.txt"), "r")
+        local balance = tonumber(file.readLine())
+        file.close()
+        return balance
+    else
+        return 0
+    end
+end
+
+-- Write balance to disk
+function writeBalance(balance)
+    if not drive.isDiskPresent() then
+        return false, "No disk inserted"
+    end
+    local path = drive.getMountPath()
+    local file = fs.open(fs.combine(path, "balance.txt"), "w")
+    file.write(tostring(balance))
+    file.close()
+    return true
+end
 
 -- Draw text on monitor
 function drawText(x, y, text, fg, bg)
@@ -197,7 +228,23 @@ function main()
         end
     end
     term.setCursorBlink(false)
-    rednet.send(SERVER_ID, {type = "register", name = player_name})
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("Insert floppy disk to register...")
+    while not drive.isDiskPresent() do
+        os.sleep(1)
+    end
+    local balance, err = readBalance()
+    if balance and balance >= TOURNAMENT_BUYIN then
+        balance = balance - TOURNAMENT_BUYIN
+        if writeBalance(balance) then
+            rednet.send(SERVER_ID, {type = "register", name = player_name, success = true})
+        else
+            rednet.send(SERVER_ID, {type = "register", name = player_name, success = false, error = "Error writing to disk"})
+        end
+    else
+        rednet.send(SERVER_ID, {type = "register", name = player_name, success = false, error = err or "Insufficient balance"})
+    end
     local _, message = rednet.receive(nil, 10)
     if message and message.type == "message" then
         monitor.clear()
@@ -206,10 +253,12 @@ function main()
             term.clear()
             term.setCursorPos(1, 1)
             print("Registration successful. Waiting for game to start...")
+            print("You may remove your floppy disk.")
         else
             term.clear()
             term.setCursorPos(1, 1)
             print(message.text)
+            print("Remove disk and visit bank to add chips.")
             return
         end
     else
@@ -218,6 +267,7 @@ function main()
         term.clear()
         term.setCursorPos(1, 1)
         print("Failed to register. Try again.")
+        print("Remove disk and try again.")
         return
     end
 
