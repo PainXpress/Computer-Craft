@@ -1,7 +1,30 @@
 -- Bank System for GearHallow Casino with Poker Integration
--- Save as 'bank_poker.lua' on the bank computer (ID 10)
+-- Save as 'bank_poker.lua' on the bank computer (ID 395)
 -- Requires a wired modem on back, disk drive on left, optional monitor on right
+-- Reads SERVER_ID from config.txt
 
+-- Load configuration
+local function loadConfig()
+    local config = {SERVER_ID = 394}
+    if fs.exists("config.txt") then
+        local file = fs.open("config.txt", "r")
+        local content = file.readAll()
+        file.close()
+        for line in content:gmatch("[^\r\n]+") do
+            local key, value = line:match("^(%S+)=(.+)$")
+            if key == "SERVER_ID" then
+                config.SERVER_ID = tonumber(value) or config.SERVER_ID
+            end
+        end
+    else
+        local file = fs.open("config.txt", "w")
+        file.writeLine("SERVER_ID=394")
+        file.close()
+    end
+    return config
+end
+
+local config = loadConfig()
 local modem = peripheral.wrap("back") or error("No modem found on back side", 0)
 local drive = peripheral.wrap("left") or error("No disk drive found on left side", 0)
 local monitor = peripheral.wrap("right")
@@ -11,7 +34,7 @@ local message = ""
 local password = "casino123" -- Change as needed
 local inactivity_timeout = 120 -- 2 minutes
 local last_input_time = os.clock()
-local SERVER_ID = 1 -- Poker server ID
+local SERVER_ID = config.SERVER_ID
 
 -- Initialize rednet
 modem.open(os.getComputerID())
