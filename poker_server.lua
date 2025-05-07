@@ -1,20 +1,19 @@
 -- Poker Tournament Server for GearHallow Casino
 -- Save as 'poker_server.lua' on the server computer (ID 394)
 -- Requires a wired modem on back
--- Reads BANK_ID and TERMINAL_IDS from config.txt
+-- Reads TERMINAL_IDS from config.txt
+-- Players buy in via terminal disk drives
 
 -- Load configuration
 local function loadConfig()
-    local config = {BANK_ID = 395, TERMINAL_IDS = {391, 393}}
+    local config = {TERMINAL_IDS = {391, 393}}
     if fs.exists("config.txt") then
         local file = fs.open("config.txt", "r")
         local content = file.readAll()
         file.close()
         for line in content:gmatch("[^\r\n]+") do
             local key, value = line:match("^(%S+)=(.+)$")
-            if key == "BANK_ID" then
-                config.BANK_ID = tonumber(value) or config.BANK_ID
-            elseif key == "TERMINAL_IDS" then
+            if key == "TERMINAL_IDS" then
                 config.TERMINAL_IDS = {}
                 for id in value:gmatch("%d+") do
                     table.insert(config.TERMINAL_IDS, tonumber(id))
@@ -23,7 +22,6 @@ local function loadConfig()
         end
     else
         local file = fs.open("config.txt", "w")
-        file.writeLine("BANK_ID=395")
         file.writeLine("TERMINAL_IDS=391,393")
         file.close()
     end
@@ -32,7 +30,6 @@ end
 
 local config = loadConfig()
 local modem = peripheral.wrap("back") or error("No modem found on back side", 0)
-local BANK_ID = config.BANK_ID
 local VALID_TERMINAL_IDS = config.TERMINAL_IDS
 local TOURNAMENT_BUYIN = 300 -- Chips required for buy-in
 local STARTING_CHIPS = 3000 -- Tournament starting stack
@@ -424,9 +421,7 @@ function main()
                         if not valid_terminal then
                             rednet.send(sender, {type = "message", text = "Invalid terminal ID. Contact casino staff."})
                         elseif message.name and message.name ~= "" then
-                            rednet.send(BANK_ID, {type = "deduct", amount = TOURNAMENT_BUYIN, player = message.name})
-                            local _, response = rednet.receive(nil, 5)
-                            if response and response.type == "deduct_response" and response.success then
+                            if message.success then
                                 table.insert(players, {
                                     id = sender,
                                     name = message.name,
@@ -440,7 +435,7 @@ function main()
                                 print(message.name .. " registered")
                                 saveState()
                             else
-                                rednet.send(sender, {type = "message", text = "Failed to deduct buy-in. Insert disk or check balance."})
+                                rednet.send(sender, {type = "message", text = message.error or "Failed to deduct buy-in. Insert disk or check balance."})
                             end
                         else
                             rednet.send(sender, {type = "message", text = "Invalid name. Try again."})
