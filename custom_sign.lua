@@ -1,80 +1,85 @@
--- custom_sign.lua
-local monitor = peripheral.find("monitor") or error("No monitor attached.")
-monitor.setTextScale(5) -- for BIG text
+local font = require("font")
+
+-- SETTINGS ------------------------
+local text = "WELCOME!"
+local alignment = "center"   -- "left", "center", "right"
+local padding = 1            -- spaces between characters
+local uppercase = true       -- convert to uppercase
+local timeout = 10           -- seconds before clearing, or nil to not clear
+local scroll = false         -- not implemented in this version
+local blink = false          -- toggle visibility periodically
+local rainbow = false        -- not implemented in this version
+-- ---------------------------------
+
+local monitor = peripheral.find("monitor")
+if not monitor then error("No monitor found!") end
+monitor.setTextScale(0.5)
 monitor.setBackgroundColor(colors.black)
 monitor.setTextColor(colors.white)
-monitor.clear()
 
--- Load config
-local function loadConfig()
-    local config = {
-        text = "Welcome!",
-        textColor = "white",
-        backgroundColor = "black",
-        blink = false,
-        blinkInterval = 1,
-    }
+local function clearMonitor()
+  monitor.setBackgroundColor(colors.black)
+  monitor.clear()
+end
 
-    if fs.exists("config.txt") then
-        for line in io.lines("config.txt") do
-            local key, value = line:match("^(%w+)%s*=%s*(.+)$")
-            if key and value then
-                if value == "true" then value = true
-                elseif value == "false" then value = false
-                elseif tonumber(value) then value = tonumber(value)
-                end
-                config[key] = value
-            end
-        end
+local function getCharLines(char)
+  return font[char] or font["?"] or {
+    "#####",
+    "#####",
+    "#####",
+    "#####",
+    "#####"
+  }
+end
+
+local function renderText(input)
+  if uppercase then input = input:upper() end
+
+  -- Build each line of the big text
+  local lines = {"", "", "", "", ""}
+  for char in input:gmatch(".") do
+    local charLines = getCharLines(char)
+    for i = 1, 5 do
+      lines[i] = lines[i] .. charLines[i] .. string.rep(" ", padding)
     end
+  end
 
-    return config
-end
+  -- Calculate horizontal position based on alignment
+  local w, h = monitor.getSize()
+  local yStart = math.floor((h - 5) / 2) + 1
 
-local function toColor(name)
-    local map = {
-        white=colors.white, orange=colors.orange, magenta=colors.magenta,
-        lightBlue=colors.lightBlue, yellow=colors.yellow, lime=colors.lime,
-        pink=colors.pink, gray=colors.gray, lightGray=colors.lightGray,
-        cyan=colors.cyan, purple=colors.purple, blue=colors.blue,
-        brown=colors.brown, green=colors.green, red=colors.red, black=colors.black
-    }
-    return map[name] or colors.white
-end
-
--- Draw centered text
-local function drawText(text, textColor, backgroundColor)
-    monitor.setBackgroundColor(backgroundColor)
-    monitor.clear()
-    monitor.setTextColor(textColor)
-
-    local w, h = monitor.getSize()
-    local x = math.floor((w - #text) / 2) + 1
-    local y = math.floor(h / 2)
-
-    monitor.setCursorPos(x, y)
-    monitor.write(text)
-end
-
--- Main loop
-local function runSign()
-    local config = loadConfig()
-
-    local show = true
-    while true do
-        if config.blink then
-            if show then
-                drawText(config.text, toColor(config.textColor), toColor(config.backgroundColor))
-            else
-                monitor.clear()
-            end
-            show = not show
-            sleep(config.blinkInterval or 1)
-        else
-            drawText(config.text, toColor(config.textColor), toColor(config.backgroundColor))
-            sleep(1)
-        end
+  for i = 1, 5 do
+    local line = lines[i]
+    local x
+    if alignment == "center" then
+      x = math.floor((w - #line) / 2) + 1
+    elseif alignment == "right" then
+      x = w - #line + 1
+    else -- left
+      x = 1
     end
+    monitor.setCursorPos(x, yStart + i - 1)
+    monitor.write(line)
+  end
 end
 
-runSign()
+local function blinkLoop()
+  while true do
+    clearMonitor()
+    sleep(0.5)
+    renderText(text)
+    sleep(0.5)
+  end
+end
+
+-- MAIN ----------------------------
+clearMonitor()
+if blink then
+  blinkLoop()
+else
+  renderText(text)
+  if timeout then
+    sleep(timeout)
+    clearMonitor()
+  end
+end
