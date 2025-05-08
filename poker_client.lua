@@ -2,6 +2,7 @@
 -- Save as 'poker_client.lua' on terminal computers (e.g., IDs 391, 393)
 -- Requires a disk drive on top and a wired modem on back
 -- Reads SERVER_ID and BUYIN from config.txt
+-- Chips are stored on the player's disk in player.txt
 
 -- Load configuration
 local function loadConfig()
@@ -30,7 +31,6 @@ end
 local config = loadConfig()
 local SERVER_ID = config.SERVER_ID
 local TOURNAMENT_BUYIN = config.BUYIN
-local BANK_ID = 395 -- Bank computer ID
 local modem = peripheral.wrap("back") or error("No modem found on back side", 0)
 local diskDrive = peripheral.wrap("top") or error("No disk drive found on top side", 0)
 
@@ -38,8 +38,8 @@ local diskDrive = peripheral.wrap("top") or error("No disk drive found on top si
 modem.open(os.getComputerID())
 rednet.open("back")
 
--- Get and write player name
-local function getAndWritePlayerName()
+-- Get and write player data (name and chips)
+local function getAndWritePlayerData()
     if not diskDrive.isDiskPresent() then
         return nil, "Please insert your player disk."
     end
@@ -58,29 +58,42 @@ local function getAndWritePlayerName()
     if not name or name == "" then
         return nil, "Name cannot be empty."
     end
+
+    -- Check if player.txt exists to read existing chips
+    local chips = 1000 -- Default chips if creating a new file
+    if fs.exists(filePath) then
+        local file = fs.open(filePath, "r")
+        local data = textutils.unserialize(file.readAll())
+        file.close()
+        if data and data.chips then
+            chips = data.chips -- Preserve existing chips
+        end
+    end
+
+    -- Deduct buy-in locally
+    if chips < TOURNAMENT_BUYIN then
+        return nil, "Insufficient chips. Balance: " .. chips .. ", Required: " .. TOURNAMENT_BUYIN
+    end
+    chips = chips - TOURNAMENT_BUYIN
+
+    -- Write updated player data
+    local playerData = {name = name, chips = chips}
     local file = fs.open(filePath, "w")
-    file.writeLine(name)
+    file.write(textutils.serialize(playerData))
     file.close()
-    print("Overwrote player.txt with name: " .. name)
-    return name
+    print("Overwrote player.txt with name: " .. name .. ", chips: " .. chips)
+    return playerData
 end
 
 -- Register with the server
 local function register()
-    local name, err = getAndWritePlayerName()
-    if not name then
+    local playerData, err = getAndWritePlayerData()
+    if not playerData then
         return false, err
     end
 
-    -- Request buy-in deduction from the bank
-    rednet.send(BANK_ID, {type = "deduct", amount = TOURNAMENT_BUYIN, player = name})
-    local _, response = rednet.receive(nil, 5) -- 5-second timeout
-    if not response or response.type ~= "deduct_response" or not response.success then
-        return false, response and response.error or "Failed to communicate with bank."
-    end
-
     -- Register with the server
-    rednet.send(SERVER_ID, {type = "register", name = name, success = true})
+    rednet.send(SERVER_ID, {type = "register", name = playerData.name, success = true})
     return true, "Registration successful. Waiting for game to start..."
 end
 
