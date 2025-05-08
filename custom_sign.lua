@@ -1,7 +1,7 @@
 -- sign.lua - Fully featured customizable BIG text sign for ComputerCraft (Tekkit SMP)
 
 -- Load font module
-local font = require("sign/font")
+local font = require("font")
 
 -- Color name to ComputerCraft color API mapping
 local colorNames = {
