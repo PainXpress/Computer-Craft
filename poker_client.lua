@@ -1,5 +1,5 @@
 -- Poker Tournament Client for GearHallow Casino
--- Save as 'poker_client.lua' on player terminal computers (e.g., IDs 391, 393)
+-- Save as 'poker_client.lua' on player terminal computers (e.g., IDs 5674, 5675)
 -- Requires a wired modem on back and an advanced monitor on right
 -- Reads SERVER_ID from config.txt
 
@@ -16,10 +16,16 @@ local registered = false
 -- Load server ID from config.txt
 local config_file = fs.open("config.txt", "r")
 if config_file then
-    SERVER_ID = tonumber(config_file.readLine())
+    local id = tonumber(config_file.readLine())
+    if id then
+        SERVER_ID = id
+        print("Loaded SERVER_ID: " .. SERVER_ID)
+    else
+        error("Invalid SERVER_ID in config.txt", 0)
+    end
     config_file.close()
 else
-    error("config.txt not found or invalid", 0)
+    error("config.txt not found or unreadable", 0)
 end
 
 -- Initialize rednet and monitor
@@ -202,6 +208,7 @@ function main()
             end
         end
         term.setCursorBlink(false)
+        print("Sending registration to SERVER_ID: " .. (SERVER_ID or "nil"))
         rednet.send(SERVER_ID, {type = "register", name = player_name})
         local _, message = rednet.receive(nil, 10)
         if message and message.type == "message" then
