@@ -1,11 +1,11 @@
 -- Poker Tournament Server for GearHallow Casino
--- Save as 'poker_server.lua' on the server computer (ID 394)
+-- Save as 'poker_server.lua' on the server computer (ID 5680)
 -- Requires a wired modem on back
 -- Reads TERMINAL_IDS from config.txt
 -- Players buy in via terminal disk drives
 
 local modem = peripheral.wrap("back") or error("No modem found on back side", 0)
-local VALID_TERMINAL_IDS = {391, 393} -- Update with actual terminal IDs
+local VALID_TERMINAL_IDS = {5674, 5675} -- Updated to match client IDs
 local TOURNAMENT_BUYIN = 300 -- Chips required for buy-in
 local STARTING_CHIPS = 3000 -- Tournament starting stack
 local MAX_PLAYERS = 9
@@ -166,6 +166,7 @@ function main()
                     local event, p1, p2, p3 = os.pullEvent()
                     if event == "rednet_message" then
                         local sender, message = p1, p2
+                        print("Received message from " .. sender .. " with type: " .. (message and message.type or "nil"))
                         if message.type == "register" and #players < MAX_PLAYERS then
                             local valid_terminal = false
                             for _, id in ipairs(VALID_TERMINAL_IDS) do
