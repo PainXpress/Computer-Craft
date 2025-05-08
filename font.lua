@@ -413,3 +413,20 @@ return {
     "     "
   }
 }
+
+function font.renderText(text, uppercase)
+  if uppercase then
+    text = text:upper()
+  end
+
+  local lines = {"", "", "", "", ""}
+  for char in text:gmatch(".") do
+    local glyph = font[char] or font["?"]
+    for i = 1, 5 do
+      lines[i] = lines[i] .. glyph[i] .. " "
+    end
+  end
+  return lines
+end
+
+return font
