@@ -1,0 +1,38 @@
+# Text to display
+text=Welcome to the Casino!
+
+# Font style: block | outline | shadow
+font=block
+
+# Text color: any valid term color name or code (e.g., white, red, gray)
+textColor=white
+
+# Background color
+backgroundColor=black
+
+# Enable rainbow text coloring
+rainbow=false
+
+# Scroll effect: none | left | right | up | down
+scroll=none
+
+# Scroll speed in ticks (1 = fastest)
+scrollSpeed=5
+
+# Blink effect toggle
+blink=false
+
+# Blink interval (in ticks)
+blinkInterval=20
+
+# Text alignment: left | center | right
+alignment=center
+
+# Convert all text to uppercase
+uppercase=true
+
+# Padding (spaces) around text
+padding=1
+
+# Idle timeout in seconds (0 = never clear screen)
+idleTimeout=0
