@@ -38,8 +38,8 @@ local diskDrive = peripheral.wrap("top") or error("No disk drive found on top si
 modem.open(os.getComputerID())
 rednet.open("back")
 
--- Check for disk and read player name
-local function getPlayerName()
+-- Get and write player name
+local function getAndWritePlayerName()
     if not diskDrive.isDiskPresent() then
         return nil, "Please insert your player disk."
     end
@@ -48,21 +48,26 @@ local function getPlayerName()
         return nil, "Failed to access disk."
     end
     local filePath = fs.combine(diskPath, "player.txt")
-    if not fs.exists(filePath) then
-        return nil, "Player data not found on disk. Ensure 'player.txt' exists."
-    end
-    local file = fs.open(filePath, "r")
-    local name = file.readLine()
-    file.close()
+
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("GearHallow Casino Poker Terminal")
+    print("Buy-in: " .. TOURNAMENT_BUYIN .. " chips")
+    print("Please enter your name (overwrites existing player.txt):")
+    local name = io.read()
     if not name or name == "" then
-        return nil, "Invalid player name on disk."
+        return nil, "Name cannot be empty."
     end
+    local file = fs.open(filePath, "w")
+    file.writeLine(name)
+    file.close()
+    print("Overwrote player.txt with name: " .. name)
     return name
 end
 
 -- Register with the server
 local function register()
-    local name, err = getPlayerName()
+    local name, err = getAndWritePlayerName()
     if not name then
         return false, err
     end
