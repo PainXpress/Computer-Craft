@@ -89,18 +89,18 @@ function loadState()
         local file = fs.open("game_state.txt", "r")
         local state = textutils.unserialize(file.readAll())
         file.close()
-        players = state.players
-        deck = state.deck
-        community_cards = state.community_cards
-        main_pot = state.main_pot
-        side_pots = state.side_pots
-        current_bet = state.current_bet
-        dealer_pos = state.dealer_pos
-        small_blind = state.small_blind
-        big_blind = state.big_blind
-        game_state = state.game_state
-        current_player = state.current_player
-        casino_profits = state.casino_profits
+        players = state.players or {}
+        deck = state.deck or {}
+        community_cards = state.community_cards or {}
+        main_pot = state.main_pot or 0
+        side_pots = state.side_pots or {}
+        current_bet = state.current_bet or 0
+        dealer_pos = state.dealer_pos or 1
+        small_blind = state.small_blind or 10
+        big_blind = state.big_blind or 20
+        game_state = state.game_state or "registration"
+        current_player = state.current_player or 1
+        casino_profits = state.casino_profits or 0
         return true
     end
     return false
@@ -165,7 +165,10 @@ function broadcastState()
     end
     for _, player in ipairs(players) do
         if player.active then
-            rednet.send(player.id, {type = "state", state = state, your_cards = player.cards})
+            local success, err = pcall(function() rednet.send(player.id, {type = "state", state = state, your_cards = player.cards}) end)
+            if not success then
+                print("Failed to send state to " .. player.name .. ": " .. err)
+            end
         end
     end
     saveState()
@@ -360,7 +363,10 @@ function awardPots()
             local split = math.floor(player_pot / #winners)
             for _, winner in ipairs(winners) do
                 winner.chips = winner.chips + split
-                rednet.send(winner.id, {type = "message", text = "You won " .. split .. " chips after 10% house cut from a pot!"})
+                local success, err = pcall(function() rednet.send(winner.id, {type = "message", text = "You won " .. split .. " chips after 10% house cut from a pot!"}) end)
+                if not success then
+                    print("Failed to send win message to " .. winner.name .. ": " .. err)
+                end
             end
         end
     end
@@ -385,7 +391,10 @@ function checkTournamentEnd()
             local final_prize = winner.chips - house_cut
             logProfit(house_cut)
             winner.chips = final_prize
-            rednet.send(winner.id, {type = "message", text = "You won the tournament with " .. final_prize .. " chips after 10% house cut!"})
+            local success, err = pcall(function() rednet.send(winner.id, {type = "message", text = "You won the tournament with " .. final_prize .. " chips after 10% house cut!"}) end)
+            if not success then
+                print("Failed to send tournament win message to " .. winner.name .. ": " .. err)
+            end
         end
         saveState()
         return true
@@ -410,7 +419,6 @@ function main()
                 if event == "rednet_message" then
                     local sender, message = p1, p2
                     if message.type == "register" and #players < MAX_PLAYERS then
-                        -- Validate terminal ID
                         local valid_terminal = false
                         for _, id in ipairs(VALID_TERMINAL_IDS) do
                             if sender == id then
@@ -464,23 +472,48 @@ function main()
                 player.folded = false
                 player.current_bet = 0
             end
-            dealCards()
+            local success, err = pcall(dealCards)
+            if not success then
+                print("Error dealing cards: " .. err)
+                game_state = "registration" -- Restart registration
+                saveState()
+                break
+            end
             game_state = "preflop"
             current_player = (dealer_pos % #players) + 1
+            if current_player > #players or current_player < 1 then
+                current_player = 1
+                print("Reset current_player to 1 due to invalid index")
+            end
             local sb_player = players[(dealer_pos % #players) + 1]
             local bb_player = players[((dealer_pos + 1) % #players) + 1]
-            sb_player.chips = sb_player.chips - small_blind
-            sb_player.current_bet = small_blind
-            main_pot = main_pot + small_blind
-            bb_player.chips = bb_player.chips - big_blind
-            bb_player.current_bet = big_blind
-            main_pot = main_pot + big_blind
-            current_bet = big_blind
-            current_player = ((dealer_pos + 2) % #players) + 1
+            if sb_player and bb_player then
+                sb_player.chips = sb_player.chips - small_blind
+                sb_player.current_bet = small_blind
+                main_pot = main_pot + small_blind
+                bb_player.chips = bb_player.chips - big_blind
+                bb_player.current_bet = big_blind
+                main_pot = main_pot + big_blind
+                current_bet = big_blind
+                current_player = ((dealer_pos + 2) % #players) + 1
+                if current_player > #players or current_player < 1 then
+                    current_player = 1
+                    print("Reset current_player to 1 due to invalid index")
+                end
+            else
+                print("Error: Insufficient players for blinds")
+                game_state = "registration"
+                saveState()
+                break
+            end
             local blind_timer = os.startTimer(BLIND_INCREASE_TIME)
             while game_state ~= "ended" do
-                broadcastState()
-                if players[current_player].active and not players[current_player].folded then
+                success, err = pcall(broadcastState)
+                if not success then
+                    print("Error broadcasting state: " .. err)
+                    break
+                end
+                if players[current_player] and players[current_player].active and not players[current_player].folded then
                     rednet.send(players[current_player].id, {type = "action", options = {"fold", "call", "raise"}})
                     local _, message = rednet.receive(nil, ACTION_TIMEOUT)
                     if message and message.type == "action" then
@@ -510,6 +543,10 @@ function main()
                     end
                 end
                 current_player = (current_player % #players) + 1
+                if current_player > #players or current_player < 1 then
+                    current_player = 1
+                    print("Reset current_player to 1 due to invalid index")
+                end
                 local active_players = 0
                 local all_called = true
                 for _, player in ipairs(players) do
@@ -568,4 +605,15 @@ function main()
     end
 end
 
-pcall(main)
+-- Restart on error
+local function restart()
+    print("Server restarting due to error...")
+    os.sleep(2)
+    os.reboot()
+end
+
+local success, err = pcall(main)
+if not success then
+    print("Error in main loop: " .. err)
+    restart()
+end
