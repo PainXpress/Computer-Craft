@@ -1,14 +1,39 @@
+local function loadConfig(path)
+  local config = {}
+  local file = fs.open(path, "r")
+  if not file then error("Missing config file: " .. path) end
+
+  for line in file.readLine do
+    local key, value = line:match("^(%w+)%s*=%s*(.+)$")
+    if key and value then
+      -- Attempt to auto-typecast
+      if value == "true" then
+        value = true
+      elseif value == "false" then
+        value = false
+      elseif tonumber(value) then
+        value = tonumber(value)
+      end
+      config[key] = value
+    end
+  end
+  file.close()
+  return config
+end
+
 local font = require("font")
 
 -- SETTINGS ------------------------
-local text = "WELCOME!"
-local alignment = "center"   -- "left", "center", "right"
-local padding = 1            -- spaces between characters
-local uppercase = true       -- convert to uppercase
-local timeout = 10           -- seconds before clearing, or nil to not clear
-local scroll = false         -- not implemented in this version
-local blink = false          -- toggle visibility periodically
-local rainbow = false        -- not implemented in this version
+local config = loadConfig("sign/config.txt")
+
+local text      = config.text or "WELCOME!"
+local alignment = config.alignment or "center"
+local padding   = config.padding or 1
+local uppercase = config.uppercase ~= false
+local timeout   = config.timeout
+local scroll    = config.scroll or false
+local blink     = config.blink or false
+local rainbow   = config.rainbow or false
 -- ---------------------------------
 
 local monitor = peripheral.find("monitor")
