@@ -1,6 +1,7 @@
 -- chunk_builder.lua
 -- ComputerCraft Schematic Builder (Chunk-Based)
 -- By Gemini (Google AI)
+-- Rewritten runBuilder section on 2025-05-22
 
 -- --- Configuration ---
 local MANIFEST_FILE = "manifest.lua" -- Name of the manifest file on your turtle
@@ -131,7 +132,7 @@ local function faceDirection(target_dir)
         turns = turns + 1
     end
     if turns >= 4 then
-        log("ERROR: Failed to face " .. target_dir .. ". Stuck?")
+        log("ERROR: Failed to face " .. target_dir ..". Stuck?")
         pause("Failed to orient")
         return false
     end
@@ -351,31 +352,40 @@ local function runBuilder()
     local success_overall = true
     for i, chunk_info in ipairs(manifest) do
         log(string.format("\n--- Building Chunk %d/%d: %s ---", i, #manifest, chunk_info.file))
-        
-        -- Load the current chunk's data
-        local chunk_data_loaded = dofile(chunk_info.file)
-        if not chunk_data_loaded then
-            log("CRITICAL ERROR: Failed to load chunk file: " .. chunk_info.file .. ". Skipping this chunk.")
-            success_overall = false
-            continue
-        end
 
-        -- Go to the absolute start coordinates of this chunk
-        if not goToAbsoluteCoords(chunk_info.startX, chunk_info.startY, chunk_info.startZ) then
-            log("CRITICAL ERROR: Failed to move to start of chunk " .. chunk_info.file .. ". Aborting build.")
-            success_overall = false
-            break
-        end
+        -- Attempt to load chunk data
+        local chunk_data_loaded_result, chunk_data_loaded_err = pcall(dofile, chunk_info.file)
+        local chunk_data_loaded = nil
 
-        -- Build the current chunk
-        if not buildSingleChunk(chunk_data_loaded, chunk_info.startX, chunk_info.startY, chunk_info.startZ) then
-            log("Chunk build failed for " .. chunk_info.file .. ". Aborting remaining build process.")
+        if not chunk_data_loaded_result then
+            log("CRITICAL ERROR: Failed to load chunk file: " .. chunk_info.file .. " Error: " .. tostring(chunk_data_loaded_err) .. ". Skipping this chunk.")
             success_overall = false
-            break
+            -- No 'continue' here, as the loop structure will handle going to the next chunk.
+            -- This also avoids potential misinterpretation if 'continue' was problematic.
+        else
+            chunk_data_loaded = chunk_data_loaded_err -- pcall returns the result as the second value on success
+            if not chunk_data_loaded or type(chunk_data_loaded) ~= "table" then
+                 log("CRITICAL ERROR: Chunk data from " .. chunk_info.file .. " is not a valid table. Skipping this chunk.")
+                 success_overall = false
+            else
+                -- Go to the absolute start coordinates of this chunk
+                if not goToAbsoluteCoords(chunk_info.startX, chunk_info.startY, chunk_info.startZ) then
+                    log("CRITICAL ERROR: Failed to move to start of chunk " .. chunk_info.file .. ". Aborting build.")
+                    success_overall = false
+                    break
+                end
+
+                -- Build the current chunk
+                if not buildSingleChunk(chunk_data_loaded, chunk_info.startX, chunk_info.startY, chunk_info.startZ) then
+                    log("Chunk build failed for " .. chunk_info.file .. ". Aborting remaining build process.")
+                    success_overall = false
+                    break
+                end
+                -- Optional: Clear chunk_data_loaded from memory to free up resources if chunks are very large
+                chunk_data_loaded = nil
+                collectgarbage("collect") -- Force garbage collection
+            end
         end
-        -- Optional: Clear chunk_data_loaded from memory to free up resources if chunks are very large
-        chunk_data_loaded = nil
-        collectgarbage("collect") -- Force garbage collection
     end
 
     if success_overall then
