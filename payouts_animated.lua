@@ -1,9 +1,8 @@
 -- payouts_animated.lua
 
 -- CONFIGURATION
-local useMonitor = false  -- Set to true if using a monitor peripheral
-local monitorSide = "right"  -- Change this to match your setup
-local animateDelay = 0.3
+local animateDelay = 0.3      -- Delay between lines
+local loopDelay = 2           -- Delay before repeating animation
 
 -- DATA
 local payouts = {
@@ -14,21 +13,17 @@ local payouts = {
     { combo = "All other combos",   multiplier = 0,  color = colors.gray }
 }
 
--- SETUP TERMINAL OR MONITOR
-local screen = term
-if useMonitor then
-    local monitor = peripheral.wrap(monitorSide)
-    monitor.setTextScale(1)
-    monitor.setBackgroundColor(colors.black)
-    monitor.clear()
-    screen = monitor
-else
-    term.setBackgroundColor(colors.black)
-    term.clear()
+-- UTILITY
+local function findMonitor()
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "monitor" then
+            return peripheral.wrap(name)
+        end
+    end
+    return nil
 end
 
--- UTILITY
-local function centerText(y, text, textColor)
+local function centerText(screen, y, text, textColor)
     local w, _ = screen.getSize()
     local x = math.floor((w - #text) / 2) + 1
     screen.setCursorPos(x, y)
@@ -36,10 +31,12 @@ local function centerText(y, text, textColor)
     screen.write(text)
 end
 
--- MAIN DISPLAY FUNCTION
-local function displayPayouts()
+local function displayPayouts(screen)
+    screen.setBackgroundColor(colors.black)
+    screen.clear()
+
     screen.setTextColor(colors.yellow)
-    centerText(1, "Slot Machine Payouts", colors.yellow)
+    centerText(screen, 1, "Slot Machine Payouts", colors.yellow)
 
     screen.setCursorPos(1, 3)
     screen.setTextColor(colors.lightGray)
@@ -59,4 +56,13 @@ local function displayPayouts()
     end
 end
 
-displayPayouts()
+-- MAIN
+local screen = findMonitor() or term
+if peripheral.getType(screen) == "monitor" then
+    screen.setTextScale(1)
+end
+
+while true do
+    displayPayouts(screen)
+    sleep(loopDelay)
+end
