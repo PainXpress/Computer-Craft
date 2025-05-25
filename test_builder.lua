@@ -1,40 +1,32 @@
--- Attempt to load JSON parser
+-- Load JSON parser (rxi/json.lua)
 local json = require("json")
 
--- Auto-detect disk drive and read JSON
-local function findPeripheralByType(ptype)
-  for _, side in ipairs(peripheral.getNames()) do
-    if peripheral.getType(side) == ptype then
-      return side
-    end
-  end
-  return nil
-end
+-- Load schematic from local turtle storage
+local schematicFile = "schematic.json"
 
-local diskSide = findPeripheralByType("drive")
-if not diskSide then
-  print("No disk drive found!")
+if not fs.exists(schematicFile) then
+  print("schematic.json not found!")
   return
 end
 
-local mountPath = disk.getMountPath(diskSide)
-local filePath = mountPath .. "/schematic.json"
-
--- Read and decode JSON
-local file = fs.open(filePath, "r")
-if not file then
-  print("Could not open schematic.json on disk.")
-  return
-end
-
-local jsonText = file.readAll()
+local file = fs.open(schematicFile, "r")
+local content = file.readAll()
 file.close()
 
-local schematic = json.decode(jsonText)
-if not schematic then
-  print("Failed to parse schematic JSON.")
+local success, schematic = pcall(json.decode, content)
+if not success or not schematic then
+  print("Failed to parse schematic.json")
   return
 end
 
 print("Schematic loaded successfully!")
--- You can now start parsing and counting blocks.
+
+-- Dummy test print to verify format
+-- You can replace this with actual material counting / building
+for y, layer in ipairs(schematic.layers or {}) do
+  for z, row in ipairs(layer) do
+    for x, block in ipairs(row) do
+      print(string.format("Block at %d,%d,%d is %s", x, y, z, block.name or "air"))
+    end
+  end
+end
