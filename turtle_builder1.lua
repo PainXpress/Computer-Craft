@@ -3,15 +3,21 @@
 local json = require("json")
 
 -- Helper to find inventory (chest)
-local function findInventory()
-  local sides = {"left", "right", "top", "bottom", "front", "back"}
+local function detectChest()
+  local sides = { "front", "back", "left", "right", "top", "bottom" }
   for _, side in ipairs(sides) do
-    if peripheral.getType(side) == "inventory" or peripheral.getType(side):find("chest") then
+    if peripheral.isPresent(side) and peripheral.getType(side) == "inventory" then
       return peripheral.wrap(side)
     end
   end
   return nil
 end
+
+local chest = detectChest()
+if not chest then
+  error("No chest detected nearby!")
+end
+
 
 -- Load schematic
 local function loadSchematic(path)
